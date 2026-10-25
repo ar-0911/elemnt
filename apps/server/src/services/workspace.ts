@@ -40,11 +40,11 @@ export async function issueToken(db: Db, userId: string, name: string): Promise<
 
 export async function viewerForToken(db: Db, workspaceId: string, token: string): Promise<Viewer | undefined> {
   const [row] = await db
-    .select({ userId: users.id, email: users.email, tokenId: apiTokens.id })
+    .select({ userId: users.id, email: users.email, tokenId: apiTokens.id, expiresAt: apiTokens.expiresAt })
     .from(apiTokens)
     .innerJoin(users, eq(users.id, apiTokens.userId))
     .where(eq(apiTokens.tokenHash, sha256(token)));
-  if (!row) return undefined;
+  if (!row || (row.expiresAt && row.expiresAt < new Date())) return undefined;
   const [member] = await db.select({ role: members.role }).from(members).where(and(eq(members.workspaceId, workspaceId), eq(members.userId, row.userId)));
   await db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.tokenId));
   return { userId: row.userId, email: row.email, role: member?.role };

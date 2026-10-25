@@ -11,10 +11,11 @@ import type { Config } from "../src/lib/config.js";
 import { bootstrap, issueToken } from "../src/services/workspace.js";
 import { members, users } from "../src/db/schema.js";
 import { newId } from "../src/lib/ids.js";
+import type { AiProvider } from "../src/services/ai.js";
 
 export const PUBLIC_URL = "https://docs.example.com";
 
-export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean } = {}) {
+export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean; ai?: AiProvider } = {}) {
   const client = new PGlite();
   const db = drizzle(client, { schema }) as unknown as Db;
   await migrate(drizzle(client), { migrationsFolder });
@@ -26,7 +27,7 @@ export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean 
     secretKey: randomBytes(32).toString("base64"),
     ...(options.linkedin ? { linkedin: { clientId: "cid", clientSecret: "secret", apiVersion: "202509" } } : {}),
   };
-  const app = createApp({ db, blobs: new MemoryBlobStore(), config, ...(options.fetch ? { fetch: options.fetch } : {}) });
+  const app = createApp({ db, blobs: new MemoryBlobStore(), config, ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.ai ? { ai: options.ai } : {}) });
 
   const call = (path: string, init: RequestInit & { token?: string; json?: unknown } = {}) => {
     const headers = new Headers(init.headers);
@@ -42,5 +43,5 @@ export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean 
     return issueToken(db, user!.id, "test");
   }
 
-  return { app, db, call, ownerToken, addMember, close: () => client.close() };
+  return { app, db, call, ownerToken, addMember, config, close: () => client.close() };
 }

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, type OpenedPage, type SaveResult } from "./api";
+import { api, ApiError, type OpenedPage, type SaveResult, type SuggestionDetail } from "./api";
 import { CommentsPanel } from "./CommentsPanel";
 import { HistoryPanel } from "./HistoryPanel";
+import { AssistBar } from "./AssistBar";
 import { Preview } from "./Preview";
+import { SuggestionsPanel } from "./SuggestionsPanel";
 import { SourceEditor, type SourceEditorHandle } from "./SourceEditor";
 import { useCompiler } from "./useCompiler";
 
 type Mode = "split" | "source" | "preview";
-type Panel = "none" | "history" | "comments";
+type Panel = "none" | "history" | "comments" | "suggestions";
 type Status = { kind: "idle" | "saving" | "saved" | "error" | "conflict" | "published"; text: string };
 
 const AUTOSAVE_MS = 1500;
@@ -24,7 +26,11 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
   const [source, setSource] = useState("");
   const [lockedOut, setLockedOut] = useState<string>();
   const [mode, setMode] = useState<Mode>("split");
-  const [panel, setPanel] = useState<Panel>("none");
+  // An agent's review link (?suggestion=sug_…) opens straight onto it.
+  const [focusSuggestion, setFocusSuggestion] = useState(() => new URLSearchParams(location.search).get("suggestion") ?? undefined);
+  const [panel, setPanel] = useState<Panel>(focusSuggestion ? "suggestions" : "none");
+  const [assist, setAssist] = useState<{ open: boolean; busy: boolean; error?: string; selection?: { from: number; to: number } }>({ open: false, busy: false });
+  const [suggestionsKey, setSuggestionsKey] = useState(0);
   const [quote, setQuote] = useState<string>();
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
   const [view, setView] = useState<"page" | "markdown">("page");
@@ -121,7 +127,29 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
     return () => clearTimeout(t);
   }, [source, readOnly, saveSerial, status.kind]);
 
+  const openAssist = useCallback(() => {
+    if (readOnly) return;
+    const sel = editor.current?.view?.state.selection.main;
+    setAssist({ open: true, busy: false, ...(sel && !sel.empty ? { selection: { from: sel.from, to: sel.to } } : {}) });
+  }, [readOnly]);
+
+  async function runAssist(instruction: string) {
+    setAssist((a) => ({ ...a, busy: true, error: undefined }));
+    try {
+      // Suggestions are made against a saved revision, so offsets and hunks line up.
+      await saveSerial(false);
+      const res = await api.post<SuggestionDetail & { id: string }>(`/api/pages/${pageId}/assist`, { instruction, baseRevisionId: head.current, ...(assist.selection ? { selection: assist.selection } : {}) });
+      setAssist({ open: false, busy: false });
+      setFocusSuggestion(res.id);
+      setSuggestionsKey((k) => k + 1);
+      setPanel("suggestions");
+    } catch (e) {
+      setAssist((a) => ({ ...a, busy: false, error: (e as ApiError).message }));
+    }
+  }
+
   const keys = [
+    { key: "Mod-i", run: () => (openAssist(), true) },
     { key: "Mod-s", run: () => (void saveSerial(false), true) },
     { key: "Mod-Enter", run: () => (void saveSerial(true), true) },
     { key: "Mod-\\", run: () => (setMode((m) => (m === "split" ? "source" : m === "source" ? "preview" : "split")), true) },
@@ -130,6 +158,10 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "i" && !(e.target instanceof HTMLElement && e.target.closest(".cm-editor"))) {
+        e.preventDefault();
+        openAssist();
+      }
       if (mod && e.key === "\\") {
         e.preventDefault();
         setMode((m) => (m === "split" ? "source" : m === "source" ? "preview" : "split"));
@@ -137,7 +169,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, []);
+  }, [openAssist]);
 
   if (!opened) return <main className="editor-main empty">Loading…</main>;
 
@@ -168,6 +200,14 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
           <button type="button" className={`btn ghost${panel === "history" ? " on" : ""}`} onClick={() => setPanel(panel === "history" ? "none" : "history")}>
             History
           </button>
+          {canEdit && (
+            <button type="button" className="btn ghost" disabled={readOnly} onClick={openAssist} title="⌘I">
+              Ask Claude
+            </button>
+          )}
+          <button type="button" className={`btn ghost${panel === "suggestions" ? " on" : ""}`} onClick={() => setPanel(panel === "suggestions" ? "none" : "suggestions")}>
+            Suggestions
+          </button>
           <button type="button" className={`btn ghost${panel === "comments" ? " on" : ""}`} onClick={() => setPanel(panel === "comments" ? "none" : "comments")}>
             Comments
           </button>
@@ -178,6 +218,18 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
           )}
         </div>
       </header>
+      {assist.open && (
+        <AssistBar
+          hasSelection={Boolean(assist.selection)}
+          busy={assist.busy}
+          error={assist.error}
+          onSubmit={(i) => void runAssist(i)}
+          onClose={() => {
+            setAssist({ open: false, busy: false });
+            editor.current?.view?.focus();
+          }}
+        />
+      )}
       {lockedOut && <p className="banner">{lockedOut} You can read along; editing opens up when they close the page.</p>}
       {status.kind === "conflict" && (
         <p className="banner">
@@ -221,6 +273,16 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
             publishedRevisionId={opened.page.publishedRevisionId}
             canEdit={!readOnly}
             onRestored={() => void load().then(onChanged)}
+          />
+        )}
+        {panel === "suggestions" && (
+          <SuggestionsPanel
+            pageId={pageId}
+            canEdit={canEdit && !readOnly}
+            focus={focusSuggestion}
+            refreshKey={suggestionsKey}
+            beforeApply={() => saveSerial(false)}
+            onApplied={() => void load().then(onChanged)}
           />
         )}
         {panel === "comments" && <CommentsPanel pageId={pageId} quote={quote} clearQuote={() => setQuote(undefined)} />}
