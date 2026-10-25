@@ -14,6 +14,8 @@ Readers switch between the two with a Page / Markdown toggle. Docs live only in 
 | Package | What it does |
 | --- | --- |
 | [`@elemnt/core`](packages/core) | Parser, component contract, validation, HTML and agent-Markdown compilers, built-in components |
+| [`@elemnt/server`](apps/server) | API, reader, search, comments, LinkedIn; serves the editor at `/app` |
+| [`@elemnt/web`](apps/web) | The split-view editor: CodeMirror source, live preview, drafts, history, comments, ⌘K search |
 
 ## Develop
 

@@ -20,6 +20,8 @@ pnpm --filter @elemnt/server dev
 
 Bootstrap prints an API token. Use it as `Authorization: Bearer …`, or paste it at `/login`.
 
+The editor lives at `/app`. The server serves the built `apps/web/dist` (set `ELEMNT_WEB_DIR` to move it), so run `pnpm build` at the root first. For editor work with hot reload, run the server and `pnpm --filter @elemnt/web dev`, then open http://localhost:5173/app/.
+
 ## Try it
 
 The quickest look: `pnpm --filter @elemnt/server seed:demo` (or `docker compose exec server node dist/seed-demo.js`) creates a public demo space with two sample pages and prints their URLs.
@@ -45,7 +47,12 @@ open http://localhost:8787/s/docs/hello
 | `POST /api/spaces` | Create a space (admin) |
 | `GET /api/spaces/:space/tree` | Page tree |
 | `POST /api/spaces/:space/pages` | Create a page `{path, source}`; 422 with diagnostics if the source has errors |
-| `GET /api/pages/:id`, `PUT /api/pages/:id` | Read source; save `{source, baseRevisionId}` (409 if someone saved first) |
+| `GET /api/pages/:id`, `PUT /api/pages/:id` | Read source; save `{source, baseRevisionId, publish?}` (409 if someone saved first). `publish: false` saves a draft, which may contain errors |
+| `POST /api/pages/:id/publish`, `DELETE /api/pages/:id/draft` | Publish or discard the draft |
+| `POST /api/pages/:id/restore`, `GET /api/pages/:id/diff?from&to` | Restore an old revision as a new one; unified diff |
+| `POST`/`DELETE /api/pages/:id/lock` | One editor at a time (90 s lease, 423 when taken) |
+| `GET`/`POST /api/pages/:id/comments`, `POST …/:cid/resolve`, `DELETE …/:cid` | Comments anchored to quoted text, one level of replies |
+| `GET /api/search?q=&space=` | Full-text search over published pages, with highlighted snippets |
 | `GET /api/pages/:id/revisions`, `/api/revisions/:rev/{source,html,markdown}` | History and stored renditions |
 | `GET /api/pages/:id/stats` | Views by format and source (e.g. `linkedin`) |
 | `POST /api/preview` | Compile without saving, for the editor |

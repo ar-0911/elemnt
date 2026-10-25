@@ -12,6 +12,8 @@ import { contentSecurityPolicy, escapeHtml, renderShell, renderSimple } from "./
 import { HttpError } from "./services/errors.js";
 import * as linkedin from "./services/linkedin.js";
 import * as pagesSvc from "./services/pages.js";
+import * as commentsSvc from "./services/comments.js";
+import { searchPages } from "./services/search.js";
 import { pageStats, recordView } from "./services/views.js";
 import { getWorkspace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 
@@ -161,14 +163,16 @@ export function createApp(deps: AppDeps) {
 
   app.get("/api/spaces/:space/tree", async (c) => {
     const space = await readableSpace(c, c.req.param("space"));
-    return c.json({ space, pages: await pagesSvc.listPages(deps.db, space.id) });
+    const all = await pagesSvc.listPages(deps.db, space.id);
+    // Unpublished pages are only visible to workspace members.
+    return c.json({ space, pages: c.get("viewer")?.role ? all : all.filter((p) => p.published) });
   });
 
   const saveBody = z.object({ source: z.string().max(500_000), message: z.string().max(500).optional() });
 
   app.post("/api/spaces/:space/pages", async (c) => {
     const { viewer, space } = await writableSpace(c, c.req.param("space"));
-    const input = saveBody.extend({ path: z.string() }).parse(await c.req.json());
+    const input = saveBody.extend({ path: z.string(), draft: z.boolean().optional() }).parse(await c.req.json());
     const result = await pagesSvc.createPage(pageDeps, { spaceId: space.id, authorId: viewer.userId, ...input });
     return c.json({ ...result, url: pageUrl(space, pagesSvc.normalizePath(input.path)) }, 201);
   });
@@ -181,16 +185,101 @@ export function createApp(deps: AppDeps) {
     return { viewer, page, space };
   }
 
+  /** What the editor opens: the head (draft if any) source plus lock state. */
   app.get("/api/pages/:id", async (c) => {
     const { page, space } = await pageWithAccess(c, "viewer");
-    const source = page.publishedRevisionId ? await pagesSvc.readRevision(deps, page.publishedRevisionId, "source") : "";
-    return c.json({ page, url: pageUrl(space, page.path), source });
+    const head = pagesSvc.headRevisionId(page);
+    const source = head ? await pagesSvc.readRevision(deps, head, "source") : "";
+    const lockActive = Boolean(page.lockedBy && page.lockedUntil && page.lockedUntil.getTime() > Date.now());
+    const { searchText: _omit, ...rest } = page;
+    return c.json({
+      page: { ...rest, lockedBy: lockActive ? page.lockedBy : null, lockedUntil: lockActive ? page.lockedUntil : null },
+      space: { slug: space.slug, name: space.name, visibility: space.visibility },
+      headRevisionId: head,
+      url: pageUrl(space, page.path),
+      source,
+    });
   });
 
   app.put("/api/pages/:id", async (c) => {
     const { viewer, page } = await pageWithAccess(c, "editor");
-    const input = saveBody.extend({ baseRevisionId: z.string() }).parse(await c.req.json());
+    const input = saveBody.extend({ baseRevisionId: z.string(), publish: z.boolean().optional() }).parse(await c.req.json());
     return c.json(await pagesSvc.updatePage(pageDeps, { pageId: page.id, authorId: viewer.userId, ...input }));
+  });
+
+  app.post("/api/pages/:id/publish", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    return c.json(await pagesSvc.publishDraft(pageDeps, { pageId: page.id, userId: viewer.userId }));
+  });
+
+  app.delete("/api/pages/:id/draft", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    await pagesSvc.discardDraft(deps.db, { pageId: page.id, userId: viewer.userId });
+    return c.body(null, 204);
+  });
+
+  app.post("/api/pages/:id/restore", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const { revisionId } = z.object({ revisionId: z.string() }).parse(await c.req.json());
+    return c.json(await pagesSvc.restoreRevision(pageDeps, { pageId: page.id, revisionId, userId: viewer.userId }));
+  });
+
+  app.get("/api/pages/:id/diff", async (c) => {
+    const { page } = await pageWithAccess(c, "viewer");
+    const { from, to } = z.object({ from: z.string(), to: z.string() }).parse(c.req.query());
+    return c.json(await pagesSvc.diffRevisions(deps, { pageId: page.id, from, to }));
+  });
+
+  app.post("/api/pages/:id/lock", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    return c.json(await pagesSvc.acquireLock(deps.db, { pageId: page.id, userId: viewer.userId }));
+  });
+
+  app.delete("/api/pages/:id/lock", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    await pagesSvc.releaseLock(deps.db, { pageId: page.id, userId: viewer.userId });
+    return c.body(null, 204);
+  });
+
+  // ---------- comments ----------
+
+  app.get("/api/pages/:id/comments", async (c) => {
+    const { page } = await pageWithAccess(c, "viewer");
+    return c.json(await commentsSvc.listComments(deps.db, page.id));
+  });
+
+  app.post("/api/pages/:id/comments", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "viewer");
+    const input = z
+      .object({
+        body: z.string().min(1).max(10_000),
+        parentId: z.string().optional(),
+        anchor: z.object({ exact: z.string().min(1).max(1000), prefix: z.string().max(200).optional(), suffix: z.string().max(200).optional() }).optional(),
+      })
+      .parse(await c.req.json());
+    return c.json(await commentsSvc.addComment(deps.db, { pageId: page.id, authorId: viewer.userId, revisionId: page.publishedRevisionId, ...input }), 201);
+  });
+
+  app.post("/api/pages/:id/comments/:cid/resolve", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "viewer");
+    const { resolved } = z.object({ resolved: z.boolean().default(true) }).parse(await c.req.json().catch(() => ({})));
+    return c.json(await commentsSvc.setResolved(deps.db, { pageId: page.id, commentId: c.req.param("cid"), userId: viewer.userId, resolved }));
+  });
+
+  app.delete("/api/pages/:id/comments/:cid", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "viewer");
+    await commentsSvc.deleteComment(deps.db, { pageId: page.id, commentId: c.req.param("cid"), userId: viewer.userId, isAdmin: hasRole(viewer, "admin") });
+    return c.body(null, 204);
+  });
+
+  // ---------- search ----------
+
+  app.get("/api/search", async (c) => {
+    const { q, space } = z.object({ q: z.string().max(200), space: z.string().optional() }).parse(c.req.query());
+    const viewer = c.get("viewer");
+    const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
+    const readable = all.filter((s) => canRead(viewer, s) && (!space || s.slug === space));
+    return c.json(await searchPages(deps.db, { query: q, spaceIds: readable.map((s) => s.id) }));
   });
 
   app.get("/api/pages/:id/revisions", async (c) => {
@@ -258,13 +347,13 @@ export function createApp(deps: AppDeps) {
     const viewer = c.get("viewer");
     const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
     const list = all.filter((s) => canRead(viewer, s)).map((s) => `<li><a href="/s/${escapeHtml(s.slug)}">${escapeHtml(s.name)}</a> <small>${s.visibility}</small></li>`);
-    const signIn = viewer ? `<form method="post" action="/logout"><button class="btn" type="submit">Sign out ${escapeHtml(viewer.email)}</button></form>` : `<p><a href="/login">Sign in</a></p>`;
+    const signIn = viewer ? `${viewer.role && viewer.role !== "viewer" ? `<p><a class="btn" href="/app">Open the editor</a></p>` : ""}<form method="post" action="/logout"><button class="btn" type="submit">Sign out ${escapeHtml(viewer.email)}</button></form>` : `<p><a href="/login">Sign in</a></p>`;
     return html(c, renderSimple(c.get("nonce"), "Elemnt", `<h1>Elemnt</h1>${list.length ? `<ul>${list.join("")}</ul>` : "<p>No spaces yet.</p>"}${signIn}`));
   });
 
   app.get("/s/:space/llms.txt", async (c) => {
     const space = await readableSpace(c, c.req.param("space"));
-    const list = await pagesSvc.listPages(deps.db, space.id);
+    const list = (await pagesSvc.listPages(deps.db, space.id)).filter((p) => p.published);
     const lines = list.map((p) => `- [${p.title}](${pageUrl(space, p.path)}.md)${p.summary ? `: ${p.summary}` : ""}`);
     return c.text(`# ${space.name}\n\n> ${list.length} page${list.length === 1 ? "" : "s"}. Each link is the Markdown version of the page. All pages in one file: ${deps.config.publicUrl}/s/${space.slug}/llms-full.txt\n\n## Pages\n\n${lines.join("\n")}\n`);
   });
@@ -280,7 +369,7 @@ export function createApp(deps: AppDeps) {
 
   app.get("/s/:space", async (c) => {
     const space = await readableSpace(c, c.req.param("space"));
-    const list = await pagesSvc.listPages(deps.db, space.id);
+    const list = (await pagesSvc.listPages(deps.db, space.id)).filter((p) => p.published);
     const items = list.map((p) => {
       const depth = p.path.split("/").length - 1;
       return `<li style="margin-left:${depth * 20}px"><a href="/s/${escapeHtml(space.slug)}/${escapeHtml(p.path)}">${escapeHtml(p.title)}</a>${p.summary ? ` <small>${escapeHtml(p.summary)}</small>` : ""}</li>`;
@@ -334,6 +423,7 @@ export function createApp(deps: AppDeps) {
         space,
         view,
         body,
+        ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic
           ? {
               share: {

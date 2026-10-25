@@ -2,7 +2,7 @@ import type { Diagnostic } from "@elemnt/core";
 
 export class HttpError extends Error {
   constructor(
-    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 502,
+    readonly status: 400 | 401 | 403 | 404 | 409 | 422 | 423 | 429 | 502,
     message: string,
     readonly details?: Record<string, unknown>,
   ) {
