@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { GitHubConfig } from "../services/github.js";
 
 const schema = z.object({
   DATABASE_URL: z.string().url(),
@@ -19,6 +20,11 @@ const schema = z.object({
   PORT: z.coerce.number().int().default(8787),
   /** Optional server-wide Anthropic key; a workspace's own key (Settings) takes precedence. */
   ANTHROPIC_API_KEY: z.string().optional(),
+  /** Read-only GitHub access for explainer pages: a GitHub App (preferred) or a token. Public repos work without either. */
+  GITHUB_APP_ID: z.string().optional(),
+  GITHUB_APP_PRIVATE_KEY: z.string().optional(),
+  GITHUB_WEBHOOK_SECRET: z.string().optional(),
+  GITHUB_TOKEN: z.string().optional(),
   LINKEDIN_CLIENT_ID: z.string().optional(),
   LINKEDIN_CLIENT_SECRET: z.string().optional(),
   /** LinkedIn's versioned REST API wants a YYYYMM header; versions retire after about a year. */
@@ -35,6 +41,7 @@ export interface Config {
   sandboxUrl?: string;
   widgetSelfVerify?: boolean;
   anthropicApiKey?: string;
+  github?: GitHubConfig;
   linkedin?: { clientId: string; clientSecret: string; apiVersion: string };
 }
 
@@ -65,6 +72,12 @@ export function configFromEnv(env: Env): Config {
     widgetSelfVerify: env.ELEMNT_WIDGET_SELF_VERIFY === "true",
     workspaceSlug: env.ELEMNT_WORKSPACE,
     secretKey: env.ELEMNT_SECRET_KEY,
+    github: {
+      ...(env.GITHUB_APP_ID ? { appId: env.GITHUB_APP_ID } : {}),
+      ...(env.GITHUB_APP_PRIVATE_KEY ? { privateKey: env.GITHUB_APP_PRIVATE_KEY } : {}),
+      ...(env.GITHUB_WEBHOOK_SECRET ? { webhookSecret: env.GITHUB_WEBHOOK_SECRET } : {}),
+      ...(env.GITHUB_TOKEN ? { token: env.GITHUB_TOKEN } : {}),
+    },
     ...(env.ANTHROPIC_API_KEY ? { anthropicApiKey: env.ANTHROPIC_API_KEY } : {}),
     ...(env.LINKEDIN_CLIENT_ID && env.LINKEDIN_CLIENT_SECRET
       ? { linkedin: { clientId: env.LINKEDIN_CLIENT_ID, clientSecret: env.LINKEDIN_CLIENT_SECRET, apiVersion: env.LINKEDIN_API_VERSION } }

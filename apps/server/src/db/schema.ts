@@ -261,3 +261,30 @@ export const widgetReports = pgTable(
   },
   (t) => [index("widget_reports_hash").on(t.hash)],
 );
+
+/**
+ * Explainer pages: a page written against a repo at a pinned commit. Elemnt
+ * only reads the repo. When files the page cites change on the default
+ * branch, the drift check opens a suggestion on the page.
+ */
+export const repoLinks = pgTable(
+  "repo_links",
+  {
+    pageId: text("page_id").primaryKey().references(() => pages.id, { onDelete: "cascade" }),
+    /** "owner/name" on GitHub. */
+    repo: text("repo").notNull(),
+    branch: text("branch").notNull().default("main"),
+    pinnedCommit: text("pinned_commit").notNull(),
+    /** Repo paths the page explains; changes to these trigger a suggestion. Empty means any change. */
+    citedPaths: jsonb("cited_paths").$type<string[]>().notNull().default([]),
+    linkedBy: text("linked_by").references(() => users.id, { onDelete: "set null" }),
+    /** Head of the branch at the last check, and how far the page is behind it. */
+    checkedCommit: text("checked_commit"),
+    behindBy: integer("behind_by").notNull().default(0),
+    /** Cited paths that changed since the pinned commit, as of the last check. */
+    changedPaths: jsonb("changed_paths").$type<string[]>().notNull().default([]),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("repo_links_repo").on(t.repo)],
+);

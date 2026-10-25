@@ -71,9 +71,28 @@ open http://localhost:8787/s/docs/hello
 | `GET`/`PUT /api/settings/widgets` | Admins: `{verified, hosts}`. Verified workspaces' widgets run without a click and may reach the listed hosts |
 | `GET /api/query?source&key` | A live value for `:query`, read from an admin-configured JSON source (cached 60 s) |
 | `GET /api/settings/query-sources`, `PUT`/`DELETE …/:slug` | Admins: `{url, public, headers?}`; headers are sealed and never returned |
+| `GET`/`PUT`/`DELETE /api/pages/:id/repo` | Explainer pages: link a page to a GitHub repo `{repo, branch?, commit?, citedPaths?}`; returns the README badge |
+| `POST /api/pages/:id/repo/check`, `POST …/repo/pin` | Run the drift check now; mark the page current at a commit |
+| `POST /integrations/github/webhook` | GitHub push events (signed with `GITHUB_WEBHOOK_SECRET`) trigger drift checks for pages on that branch |
+| `GET /r/:owner/:repo`, `…/badge.svg` | The README short link to a repo's explainer page, and its badge |
 | `POST /api/preview` | Compile without saving, for the editor |
 | `GET /integrations/linkedin/connect` | Connect a LinkedIn account |
 | `POST /api/pages/:id/linkedin` | Post a public page to LinkedIn `{commentary}` |
+
+## Repo explainers and the drift check
+
+A page can be linked to a GitHub repo at a pinned commit. The page then shows "written against `a1b2c3d`, N commits behind". The check compares the pinned commit with the branch head. If a file the page cites has changed (cited means listed in `citedPaths` or linked from the page as `github.com/owner/repo/blob/...`), the check does one of two things:
+
+- With a Claude key: Claude writes an updated page from the diffs, and it opens as a suggestion.
+- Without a key: a comment lists the changed files.
+
+Accepting a drift suggestion re-pins the page. Elemnt never writes to the repo.
+
+GitHub access, in order of preference:
+
+1. A GitHub App with read-only Contents and Metadata, subscribed to push events: set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_WEBHOOK_SECRET`, and point the webhook at `/integrations/github/webhook`.
+2. A `GITHUB_TOKEN`.
+3. Nothing, for public repos, with GitHub's low anonymous rate limit. Without the App there are no push events, so run checks from the editor's Repo panel or `POST /api/pages/:id/repo/check`.
 
 ## Widgets and the sandbox
 

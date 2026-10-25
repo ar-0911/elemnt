@@ -7,10 +7,14 @@ import { HttpError } from "./services/errors.js";
 import * as pagesSvc from "./services/pages.js";
 import { searchPages } from "./services/search.js";
 import { applyEdits, createSuggestion } from "./services/suggestions.js";
+import type { GitHubClient } from "./services/github.js";
+import { normalizeRepo } from "./services/github.js";
+import * as reposSvc from "./services/repos.js";
 import { hasRole, type Viewer } from "./services/workspace.js";
 
 interface McpDeps extends pagesSvc.PageDeps {
   config: Config;
+  github: GitHubClient;
 }
 
 const text = (value: unknown) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
@@ -74,7 +78,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
     "search",
     {
       title: "Search docs",
-      description: "Full-text search over published pages. Supports quoted phrases, OR and -exclusions.",
+      description: "Full-text search over published pages. Supports quoted phrases, OR and -exclusions. Pass a GitHub repo URL or owner/name to find the explainer page for that repo.",
       inputSchema: { query: z.string().max(200), space: z.string().optional() },
       annotations: { readOnlyHint: true },
     },
@@ -82,6 +86,20 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
       const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) });
       const ids = all.filter((s) => !slug || s.slug === slug).map((s) => s.id);
       const hits = await searchPages(deps.db, { query, spaceIds: ids, limit: 10 });
+      // A repo URL or owner/name finds that repo's explainer pages first.
+      let repo: string | undefined;
+      try {
+        repo = /github\.com\/|^[\w.-]+\/[\w.-]+$/.test(query.trim()) ? normalizeRepo(query) : undefined;
+      } catch {
+        repo = undefined;
+      }
+      const linked = repo ? (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.published && all.some((s) => s.slug === p.spaceSlug && ids.includes(s.id))) : [];
+      if (linked.length) {
+        return text([
+          ...linked.map((p) => ({ space: p.spaceSlug, path: p.path, title: p.title, explains: repo })),
+          ...hits.filter((h) => !linked.some((l) => l.path === h.path && l.spaceSlug === h.spaceSlug)).map((h) => ({ space: h.spaceSlug, path: h.path, title: h.title, summary: h.summary })),
+        ]);
+      }
       return text(hits.map((h) => ({ space: h.spaceSlug, path: h.path, title: h.title, summary: h.summary, snippet: h.snippetHtml?.replace(/<\/?mark>/g, "**") })));
     }),
   );
@@ -152,6 +170,30 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         const p = pagesSvc.normalizePath(path);
         const check = deps.elemnt.compile(source);
         return text({ pageId: created.pageId, status: "draft", review: reviewUrl(slug, p), diagnostics: check.diagnostics });
+      }),
+    );
+
+    server.registerTool(
+      "link_repo",
+      {
+        title: "Link a repo to a page",
+        description:
+          "Marks a page as the explainer for a GitHub repo, written against a commit (default: the branch head now). Elemnt then watches the files the page cites (its github.com links plus cited_paths) and suggests edits when they change. Read-only toward the repo. Returns the README badge and short URL.",
+        inputSchema: {
+          space: z.string(),
+          path: z.string(),
+          repo: z.string().describe("owner/name or a github.com URL"),
+          commit: z.string().optional().describe("The commit SHA you read while writing the page"),
+          branch: z.string().optional(),
+          cited_paths: z.array(z.string()).optional().describe("Repo files or folders the page explains, e.g. src/server/"),
+        },
+      },
+      tool(async (args: { space: string; path: string; repo: string; commit?: string; branch?: string; cited_paths?: string[] }) => {
+        const { page: p } = await page(args.space, args.path);
+        const repo = normalizeRepo(args.repo);
+        const link = await reposSvc.linkRepo(deps, deps.github, { pageId: p.id, repo, userId: viewer.userId, ...(args.commit ? { commit: args.commit } : {}), ...(args.branch ? { branch: args.branch } : {}), ...(args.cited_paths ? { citedPaths: args.cited_paths } : {}) });
+        const short = `${deps.config.publicUrl}/r/${repo}`;
+        return text({ repo, pinnedCommit: link.pinnedCommit, branch: link.branch, readmeBadge: `[![Explained on Elemnt](${short}/badge.svg)](${short})`, shortUrl: short });
       }),
     );
 

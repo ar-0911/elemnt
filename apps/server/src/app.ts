@@ -22,6 +22,8 @@ import { sandboxApp } from "./sandbox.js";
 import { editorApp } from "./web.js";
 import { querySourceService } from "./services/query.js";
 import * as widgetsSvc from "./services/widgets.js";
+import * as reposSvc from "./services/repos.js";
+import { githubClient, normalizeRepo, verifyWebhook } from "./services/github.js";
 import { widgetHash, sha256Hex } from "@elemnt/core";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -41,6 +43,8 @@ export interface AppDeps {
   ai?: AiProvider;
   /** The built editor (apps/web/dist), served at /app. */
   webDir?: string;
+  /** Work that outlives a request (drift checks from webhooks). Tests collect it to await. */
+  background?(task: Promise<unknown>): void;
 }
 
 /** Reports one IP or user may file per hour, so the report button can't be used to flood admins. */
@@ -51,6 +55,8 @@ type Space = typeof spaces.$inferSelect;
 
 const TOKEN_COOKIE = "elemnt_token";
 const LI_STATE_COOKIE = "elemnt_li_state";
+
+const BADGE = `<svg xmlns="http://www.w3.org/2000/svg" width="138" height="20" role="img" aria-label="Explained on Elemnt"><title>Explained on Elemnt</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="138" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="75" height="20" fill="#555"/><rect x="75" width="63" height="20" fill="#2949c7"/><rect width="138" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11"><text x="37.5" y="14">explained</text><text x="105.5" y="14">on Elemnt</text></g></svg>`;
 
 export function createApp(deps: AppDeps) {
   const elemnt = deps.elemnt ?? createElemnt();
@@ -64,6 +70,8 @@ export function createApp(deps: AppDeps) {
   const sandboxUrl = deps.config.sandboxUrl;
   const queries = querySourceService(deps.db, box, doFetch);
   const reportLog = new Map<string, number[]>();
+  const gh = githubClient(deps.config.github ?? {}, doFetch);
+  const background = deps.background ?? ((task: Promise<unknown>) => void task.catch((err) => console.error("background task failed", err)));
 
   // The sandbox origin is the same server under another hostname. It answers
   // only /w/*: nothing else, cookies included, is reachable from there.
@@ -179,6 +187,82 @@ export function createApp(deps: AppDeps) {
     requireRole(c, "viewer");
     const { source } = z.object({ source: z.string().max(500_000) }).parse(await c.req.json());
     return c.json(elemnt.compile(source));
+  });
+
+  // ---------- repo explainers ----------
+
+  app.get("/api/pages/:id/repo", async (c) => {
+    const { page } = await pageWithAccess(c, "viewer");
+    return c.json({ link: (await reposSvc.getLink(deps, page.id)) ?? null });
+  });
+
+  app.put("/api/pages/:id/repo", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const body = z
+      .object({ repo: z.string().min(3).max(300), branch: z.string().max(200).optional(), commit: z.string().max(64).optional(), citedPaths: z.array(z.string().max(500)).max(200).optional() })
+      .parse(await c.req.json());
+    const link = await reposSvc.linkRepo(deps, gh, { pageId: page.id, repo: normalizeRepo(body.repo), userId: viewer.userId, ...(body.branch ? { branch: body.branch } : {}), ...(body.commit ? { commit: body.commit } : {}), ...(body.citedPaths ? { citedPaths: body.citedPaths } : {}) });
+    return c.json({ link, ...readmeSnippet(link.repo) });
+  });
+
+  app.delete("/api/pages/:id/repo", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    await reposSvc.unlinkRepo(deps, page.id);
+    return c.body(null, 204);
+  });
+
+  app.post("/api/pages/:id/repo/check", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    return c.json(await reposSvc.checkDrift(pageDeps, gh, page.id, await aiFor(c.get("workspaceId"))));
+  });
+
+  app.post("/api/pages/:id/repo/pin", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    const { commit } = z.object({ commit: z.string().regex(/^[0-9a-f]{7,40}$/i).optional() }).parse(await c.req.json().catch(() => ({})));
+    return c.json({ link: await reposSvc.pin(deps, page.id, commit) });
+  });
+
+  /** GitHub App push events: check every page linked to the pushed branch. Nothing is written to the repo. */
+  app.post("/integrations/github/webhook", async (c) => {
+    const secret = deps.config.github?.webhookSecret;
+    if (!secret) throw new HttpError(404, "Not found.");
+    const raw = await c.req.text();
+    if (!verifyWebhook(secret, raw, c.req.header("x-hub-signature-256"))) throw new HttpError(401, "Bad signature.");
+    if (c.req.header("x-github-event") !== "push") return c.json({ ignored: true });
+    const event = JSON.parse(raw) as { ref?: string; repository?: { full_name?: string } };
+    const repo = event.repository?.full_name?.toLowerCase();
+    const branch = event.ref?.replace(/^refs\/heads\//, "");
+    if (!repo || !branch) return c.json({ ignored: true });
+    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.branch === branch);
+    const workspaceId = c.get("workspaceId");
+    background(
+      (async () => {
+        const ai = await aiFor(workspaceId);
+        for (const p of linked) await reposSvc.checkDrift(pageDeps, gh, p.pageId, ai).catch((err) => console.error(`drift check failed for ${p.pageId}`, err));
+      })(),
+    );
+    return c.json({ checking: linked.length }, 202);
+  });
+
+  function readmeSnippet(repo: string) {
+    const short = `${deps.config.publicUrl}/r/${repo}`;
+    return { shortUrl: short, badge: `[![Explained on Elemnt](${short}/badge.svg)](${short})` };
+  }
+
+  /** The README link: elemnt/r/owner/repo goes to the repo's explainer page. */
+  app.get("/r/:owner/:name", async (c) => {
+    const repo = `${c.req.param("owner")}/${c.req.param("name")}`.toLowerCase();
+    const viewer = c.get("viewer");
+    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.published && (p.visibility === "public" || viewer?.role));
+    const best = linked.find((p) => p.visibility === "public") ?? linked[0];
+    if (!best) throw new HttpError(404, "No explainer page for this repo yet.");
+    return c.redirect(`/s/${best.spaceSlug}/${best.path}?utm_source=readme`, 302);
+  });
+
+  app.get("/r/:owner/:name/badge.svg", (c) => {
+    c.header("Content-Type", "image/svg+xml");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(BADGE);
   });
 
   // ---------- widgets (spec §7) ----------
@@ -509,6 +593,11 @@ export function createApp(deps: AppDeps) {
     return undefined;
   }
 
+  async function aiFor(workspaceId: string) {
+    const k = await aiKey(workspaceId);
+    return k ? (deps.ai ?? anthropicProvider)(k.key) : undefined;
+  }
+
   async function aiClient(c: Context<Env>) {
     const k = await aiKey(c.get("workspaceId"));
     if (!k) throw new HttpError(400, "Claude isn't set up for this workspace yet. An admin can add an Anthropic API key in Settings.");
@@ -584,7 +673,10 @@ export function createApp(deps: AppDeps) {
   app.post("/api/suggestions/:sid/accept", async (c) => {
     const { viewer, suggestion } = await suggestionWithAccess(c, "editor");
     const { hunks } = z.object({ hunks: z.array(z.number().int().min(0)).optional() }).parse(await c.req.json().catch(() => ({})));
-    return c.json(await suggestionsSvc.acceptSuggestion(pageDeps, { id: suggestion.id, userId: viewer.userId, ...(hunks ? { hunks } : {}) }));
+    const result = await suggestionsSvc.acceptSuggestion(pageDeps, { id: suggestion.id, userId: viewer.userId, ...(hunks ? { hunks } : {}) });
+    // Accepting a drift suggestion brings the explainer up to the commit it was written for.
+    if (suggestion.origin === "drift" && (await reposSvc.getLink(deps, suggestion.pageId))) await reposSvc.pin(deps, suggestion.pageId);
+    return c.json(result);
   });
 
   app.post("/api/suggestions/:sid/reject", async (c) => {
@@ -679,7 +771,7 @@ export function createApp(deps: AppDeps) {
       c.header("WWW-Authenticate", `Bearer resource_metadata="${deps.config.publicUrl}/.well-known/oauth-protected-resource"`);
       return c.json({ error: "Connect with OAuth or send an Elemnt API token." }, 401);
     }
-    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config }, { viewer, workspaceId: c.get("workspaceId") });
+    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh }, { viewer, workspaceId: c.get("workspaceId") });
   });
 
   app.get("/", async (c) => {
@@ -753,6 +845,7 @@ export function createApp(deps: AppDeps) {
     const stored = await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
     const body = view === "page" ? await widgetsSvc.decorateWidgets(deps.db, stored) : stored;
     // Members and verified workspaces run widgets at once; other public readers click to run.
+    const repoLink = await reposSvc.getLink(deps, page.id);
     const autorun = Boolean(viewer?.role) || !isPublic || (await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))).verified;
     return html(
       c,
@@ -767,6 +860,7 @@ export function createApp(deps: AppDeps) {
         body,
         ...(sandboxUrl ? { sandboxUrl } : {}),
         autorun,
+        ...(repoLink ? { repo: repoLink } : {}),
         ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic
           ? {
