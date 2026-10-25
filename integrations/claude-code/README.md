@@ -30,9 +30,17 @@ claude mcp add --transport http elemnt https://YOUR-ELEMNT-HOST/mcp --header "Au
 | `create_draft` | New page as an unpublished draft (editors) |
 | `suggest_edit` | Propose a change to a page, reviewed hunk by hunk (editors) |
 | `add_comment` | Comment on a page, optionally on a quote |
+| `get_runbook` | A page's runbooks as structured steps to run, with approval gates |
+| `link_repo` | Make a page the explainer for a GitHub repo, pinned to a commit; returns a README badge (editors) |
+
+`search` also takes a GitHub repo URL and returns that repo's explainer page first, so Claude Code working in a repo can find its docs without any files in the repo.
 
 Viewers only get the read tools and comments.
 
 ## The generate-docs skill
 
 Copy `skills/generate-docs` into your project's `.claude/skills/` (or `~/.claude/skills/` for every project). Then "generate docs for the billing service" in Claude Code reads the code and writes Elemnt pages through the tools above. In Claude, the `generate_docs` prompt from the connector does the same from a conversation.
+
+## The repo-explainer skill
+
+Copy `skills/repo-explainer` the same way. "Generate an explainer for this repo" writes one rich page (what it is, an architecture diagram, a quickstart, a tour of the code, a live demo where it fits), links it to the repo at the commit Claude read, and offers the README badge. When cited files change on the default branch, Elemnt suggests an edit to the page.

@@ -5,11 +5,12 @@ import { HistoryPanel } from "./HistoryPanel";
 import { AssistBar } from "./AssistBar";
 import { Preview } from "./Preview";
 import { SuggestionsPanel } from "./SuggestionsPanel";
+import { RepoPanel } from "./RepoPanel";
 import { SourceEditor, type SourceEditorHandle } from "./SourceEditor";
 import { useCompiler } from "./useCompiler";
 
 type Mode = "split" | "source" | "preview";
-type Panel = "none" | "history" | "comments" | "suggestions";
+type Panel = "none" | "history" | "comments" | "suggestions" | "repo";
 type Status = { kind: "idle" | "saving" | "saved" | "error" | "conflict" | "published"; text: string };
 
 const AUTOSAVE_MS = 1500;
@@ -212,6 +213,9 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
           <button type="button" className={`btn ghost${panel === "comments" ? " on" : ""}`} onClick={() => setPanel(panel === "comments" ? "none" : "comments")}>
             Comments
           </button>
+          <button type="button" className={`btn ghost${panel === "repo" ? " on" : ""}`} onClick={() => setPanel(panel === "repo" ? "none" : "repo")}>
+            Repo
+          </button>
           {canEdit && (
             <button type="button" className="btn primary" disabled={readOnly || errors.length > 0} onClick={() => void saveSerial(true)} title="⌘Enter">
               Publish
@@ -304,6 +308,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
             onApplied={() => void load().then(onChanged)}
           />
         )}
+        {panel === "repo" && <RepoPanel pageId={pageId} canEdit={canEdit} onSuggested={() => setSuggestionsKey((k) => k + 1)} />}
         {panel === "comments" && <CommentsPanel pageId={pageId} quote={quote} clearQuote={() => setQuote(undefined)} />}
       </div>
     </main>

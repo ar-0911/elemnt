@@ -27,6 +27,18 @@ export interface ShellInput {
   sandboxUrl?: string;
   /** Run widgets without a click (members, or verified workspaces). */
   autorun?: boolean;
+  /** Explainer pages: the repo and commit the page was written against. */
+  repo?: { repo: string; pinnedCommit: string; checkedCommit: string | null; behindBy: number };
+}
+
+function repoBanner(r: NonNullable<ShellInput["repo"]>): string {
+  const base = `https://github.com/${escapeHtml(r.repo)}`;
+  const sha = escapeHtml(r.pinnedCommit);
+  const behind =
+    r.behindBy > 0 && r.checkedCommit
+      ? ` · <a href="${base}/compare/${sha}...${escapeHtml(r.checkedCommit)}">${r.behindBy} commit${r.behindBy === 1 ? "" : "s"} behind</a>`
+      : " · up to date";
+  return `<p class="repo-banner">Explains <a href="${base}">${escapeHtml(r.repo)}</a>, written against <a href="${base}/tree/${sha}"><code>${sha.slice(0, 7)}</code></a>${behind}</p>`;
 }
 
 export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): string {
@@ -55,6 +67,7 @@ header.bar a{color:var(--muted);text-decoration:none}.bar .crumb{font-size:14px}
 .btn{font:600 13px system-ui;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;text-decoration:none}
 .btn.li{background:#0a66c2;border-color:#0a66c2;color:#fff}
 main{max-width:760px;margin:0 auto;padding:32px 16px 96px}
+.repo-banner{font-size:13px;color:var(--muted);border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 12px;margin:0 0 20px}
 .md pre{white-space:pre-wrap;font-size:14px}
 dialog{border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);max-width:520px;width:calc(100% - 32px)}
 dialog textarea{width:100%;min-height:120px;font:inherit}
@@ -131,7 +144,7 @@ ${d ? `<meta property="og:description" content="${d}">` : ""}
     ${share}
   </span>
 </header>
-<main>${content}</main>
+<main>${p.repo ? repoBanner(p.repo) : ""}${content}</main>
 ${dialog}
 <script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: p.sandboxUrl ?? null, autorun: Boolean(p.autorun) })}</script>
 <script type="module" nonce="${p.nonce}">${SCRIPT}</script>

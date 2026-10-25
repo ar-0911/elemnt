@@ -124,3 +124,4 @@ button { font: inherit; color: inherit; }
 .widget-findings{list-style:none;margin:0;padding:8px 14px;font-size:13px;border-bottom:1px solid var(--line);background:var(--warn-soft);color:var(--warn)}
 .widget-findings li[data-severity=error]{color:var(--danger)}
 .reports{padding-left:18px;font-size:13px}.reports li{margin:6px 0}
+.repo-panel input{display:block;width:100%;margin:0 0 8px}.badge-snippet{white-space:pre-wrap;word-break:break-all;font-size:12px}
