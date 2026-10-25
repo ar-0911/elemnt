@@ -1,0 +1,35 @@
+# Self-host: docker compose up -d, then
+#   docker compose exec server node dist/bootstrap.js --email you@example.com
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: elemnt
+      POSTGRES_PASSWORD: elemnt
+      POSTGRES_DB: elemnt
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U elemnt"]
+      interval: 5s
+      retries: 10
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://elemnt:elemnt@postgres:5432/elemnt
+      ELEMNT_BLOB_DIR: /data/blobs
+    ports:
+      - "8787:8787"
+    volumes:
+      - blobs:/data/blobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  blobs:

@@ -1,0 +1,34 @@
+{
+  "name": "@elemnt/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "db:generate": "drizzle-kit generate",
+    "bootstrap": "tsx src/bootstrap.ts",
+    "bootstrap:prod": "node dist/bootstrap.js",
+    "seed:demo": "tsx src/seed-demo.ts",
+    "seed:demo:prod": "node dist/seed-demo.js"
+  },
+  "dependencies": {
+    "@elemnt/core": "workspace:*",
+    "@hono/node-server": "2.1.5",
+    "drizzle-orm": "0.45.4",
+    "hono": "4.13.14",
+    "postgres": "3.4.9",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
+    "@types/node": "^22.20.5",
+    "drizzle-kit": "0.31.11",
+    "tsx": "^4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

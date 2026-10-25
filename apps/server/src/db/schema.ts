@@ -1,0 +1,125 @@
+import { bigserial, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+
+const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
+
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  createdAt: createdAt(),
+});
+
+export const workspaces = pgTable("workspaces", {
+  id: text("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  createdAt: createdAt(),
+});
+
+export const roles = ["owner", "admin", "editor", "viewer"] as const;
+export type Role = (typeof roles)[number];
+
+export const members = pgTable(
+  "members",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: text("role", { enum: roles }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.userId] })],
+);
+
+export const apiTokens = pgTable("api_tokens", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** sha256 of the token; the token itself is shown once and never stored. */
+  tokenHash: text("token_hash").notNull().unique(),
+  name: text("name").notNull(),
+  createdAt: createdAt(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+});
+
+export const visibilities = ["private", "workspace", "public"] as const;
+export type Visibility = (typeof visibilities)[number];
+
+export const spaces = pgTable(
+  "spaces",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    visibility: text("visibility", { enum: visibilities }).notNull().default("workspace"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("spaces_workspace_slug").on(t.workspaceId, t.slug)],
+);
+
+export const pages = pgTable(
+  "pages",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id").notNull().references(() => spaces.id, { onDelete: "cascade" }),
+    parentId: text("parent_id"),
+    /** Slash-separated slugs from the space root, e.g. `guides/deploy`. */
+    path: text("path").notNull(),
+    position: integer("position").notNull().default(0),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    publishedRevisionId: text("published_revision_id"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("pages_space_path").on(t.spaceId, t.path), index("pages_parent").on(t.parentId)],
+);
+
+/** Immutable. Bodies live in the blob store, addressed by sha256. */
+export const revisions = pgTable(
+  "revisions",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    parentRevisionId: text("parent_revision_id"),
+    sourceHash: text("source_hash").notNull(),
+    htmlHash: text("html_hash").notNull(),
+    markdownHash: text("markdown_hash").notNull(),
+    authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+    message: text("message"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("revisions_page").on(t.pageId, t.createdAt)],
+);
+
+export const pageViews = pgTable(
+  "page_views",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    format: text("format", { enum: ["html", "markdown"] }).notNull(),
+    utmSource: text("utm_source"),
+    utmCampaign: text("utm_campaign"),
+    referrerHost: text("referrer_host"),
+    viewedAt: timestamp("viewed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("page_views_page").on(t.pageId, t.viewedAt)],
+);
+
+export const linkedinAccounts = pgTable("linkedin_accounts", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  /** OpenID `sub`; the author URN is `urn:li:person:<sub>`. */
+  memberId: text("member_id").notNull(),
+  name: text("name"),
+  /** AES-256-GCM, see lib/crypto.ts. */
+  accessTokenCiphertext: text("access_token_ciphertext").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: createdAt(),
+});
+
+export const linkedinPosts = pgTable("linkedin_posts", {
+  id: text("id").primaryKey(),
+  pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  postUrn: text("post_urn").notNull(),
+  sharedUrl: text("shared_url").notNull(),
+  createdAt: createdAt(),
+});
