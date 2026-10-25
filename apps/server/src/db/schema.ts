@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigserial, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigserial, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -18,8 +18,22 @@ export const workspaces = pgTable("workspaces", {
   aiKeyCiphertext: text("ai_key_ciphertext"),
   /** Last four characters, so admins can tell which key is set. */
   aiKeyHint: text("ai_key_hint"),
+  /** Verified workspaces' widgets run without a click on public pages and may use hostAllowlist. */
+  widgetsVerified: boolean("widgets_verified").notNull().default(false),
+  /** Hosts widgets may connect to (verified workspaces only), e.g. ["api.acme.dev"]. */
+  widgetHosts: jsonb("widget_hosts").$type<string[]>().notNull().default([]),
+  /** Named live-data sources for `:query`, configured by admins. */
+  querySources: jsonb("query_sources").$type<Record<string, QuerySource>>().notNull().default({}),
   createdAt: createdAt(),
 });
+
+/** A JSON endpoint `:query` reads. Request headers (often an API token) are sealed. */
+export interface QuerySource {
+  url: string;
+  /** Anyone who can read a public page may see its values; otherwise members only. */
+  public: boolean;
+  headersCiphertext?: string;
+}
 
 export const roles = ["owner", "admin", "editor", "viewer"] as const;
 export type Role = (typeof roles)[number];
@@ -213,3 +227,37 @@ export const oauthCodes = pgTable("oauth_codes", {
   codeChallenge: text("code_challenge").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
+
+/** Every widget seen at save time, by content hash. Code lives in the blob store under the same hash. */
+export const widgets = pgTable("widgets", {
+  hash: text("hash").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  /** Who first saved this code; shown on the widget's label. */
+  authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+  pageId: text("page_id"),
+  summary: text("summary").notNull(),
+  /** Scan findings at save time. */
+  findings: jsonb("findings").$type<{ severity: "error" | "warning"; message: string }[]>().notNull().default([]),
+  createdAt: createdAt(),
+});
+
+/** The kill switch: a blocked hash is disabled on every page at once. */
+export const widgetBlocks = pgTable("widget_blocks", {
+  hash: text("hash").primaryKey(),
+  reason: text("reason").notNull(),
+  blockedBy: text("blocked_by"),
+  createdAt: createdAt(),
+});
+
+export const widgetReports = pgTable(
+  "widget_reports",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    hash: text("hash").notNull(),
+    pageUrl: text("page_url"),
+    reason: text("reason").notNull(),
+    reporterId: text("reporter_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("widget_reports_hash").on(t.hash)],
+);

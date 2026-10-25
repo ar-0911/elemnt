@@ -14,8 +14,9 @@ import { newId } from "../src/lib/ids.js";
 import type { AiProvider } from "../src/services/ai.js";
 
 export const PUBLIC_URL = "https://docs.example.com";
+export const SANDBOX_URL = "https://sandbox.example.com";
 
-export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean; ai?: AiProvider } = {}) {
+export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean; ai?: AiProvider; selfVerify?: boolean } = {}) {
   const client = new PGlite();
   const db = drizzle(client, { schema }) as unknown as Db;
   await migrate(drizzle(client), { migrationsFolder });
@@ -23,6 +24,8 @@ export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean;
 
   const config: Config = {
     publicUrl: PUBLIC_URL,
+    sandboxUrl: SANDBOX_URL,
+    widgetSelfVerify: options.selfVerify ?? true,
     workspaceSlug: "acme",
     secretKey: randomBytes(32).toString("base64"),
     ...(options.linkedin ? { linkedin: { clientId: "cid", clientSecret: "secret", apiVersion: "202509" } } : {}),

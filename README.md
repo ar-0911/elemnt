@@ -4,7 +4,7 @@ Docs that are written once in Markdown, read by people as interactive pages, and
 
 Every Elemnt page has one source file: CommonMark + GFM plus directive components such as `:::callout`, `::::tabs` and `:::diagram`. On save, Elemnt compiles that source into two stored versions:
 
-- **HTML for people**, with interactive components (tabs, steps, diagrams, and later sliders, quizzes and sandboxed widgets).
+- **HTML for people**, with interactive components: tabs, steps, diagrams, charts, sortable tables, sliders with live numbers, quizzes, annotated code, runnable code and sandboxed widgets.
 - **Markdown for agents**, with every component turned into plain text, served at `page.md`, through `llms.txt`, and over the MCP server.
 
 Readers switch between the two with a Page / Markdown toggle. Docs live only in Elemnt; Claude reads and suggests edits through MCP, and AI changes are always suggestions a person approves.
@@ -15,6 +15,7 @@ Readers switch between the two with a Page / Markdown toggle. Docs live only in 
 | --- | --- |
 | [`@elemnt/core`](packages/core) | Parser, component contract, validation, HTML and agent-Markdown compilers, built-in components |
 | [`@elemnt/server`](apps/server) | API, reader, search, comments, LinkedIn; serves the editor at `/app` |
+| [`@elemnt/elements`](packages/elements) | The browser runtime that hydrates rendered pages (charts, sliders, quizzes, the widget sandbox host); served at `/assets/elements.js` |
 | [`@elemnt/web`](apps/web) | The split-view editor: CodeMirror source, live preview, drafts, history, comments, ⌘K search |
 
 ## Develop

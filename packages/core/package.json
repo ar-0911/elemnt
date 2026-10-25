@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./expr": {
+      "types": "./dist/expr.d.ts",
+      "import": "./dist/expr.js"
     }
   },
   "files": [
@@ -43,5 +47,6 @@
     "@types/unist": "^3.0.3",
     "typescript": "5.9.3",
     "vitest": "^5.0.5"
-  }
+  },
+  "sideEffects": false
 }

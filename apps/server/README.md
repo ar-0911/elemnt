@@ -63,9 +63,28 @@ open http://localhost:8787/s/docs/hello
 | `/.well-known/oauth-*`, `/oauth/register`, `/oauth/authorize`, `/oauth/token` | OAuth 2.1 for MCP clients: dynamic registration, PKCE S256 |
 | `GET /api/pages/:id/revisions`, `/api/revisions/:rev/{source,html,markdown}` | History and stored renditions |
 | `GET /api/pages/:id/stats` | Views by format and source (e.g. `linkedin`) |
+| `POST /mcp` tool `get_runbook` | Runbooks as structured steps (commands, expected output, approval gates) for Claude to run |
+| `GET /assets/elements.js` | The reader runtime (`@elemnt/elements`) |
+| `POST /api/widgets/preview` | Editor: register widget code so the sandbox can serve it; returns scan findings |
+| `POST /api/widgets/:hash/report` | Anyone: report a widget (10 per hour per person) |
+| `GET /api/widgets/reports`, `POST`/`DELETE /api/widgets/:hash/block` | Admins: review reports; block a widget everywhere at once |
+| `GET`/`PUT /api/settings/widgets` | Admins: `{verified, hosts}`. Verified workspaces' widgets run without a click and may reach the listed hosts |
+| `GET /api/query?source&key` | A live value for `:query`, read from an admin-configured JSON source (cached 60 s) |
+| `GET /api/settings/query-sources`, `PUT`/`DELETE …/:slug` | Admins: `{url, public, headers?}`; headers are sealed and never returned |
 | `POST /api/preview` | Compile without saving, for the editor |
 | `GET /integrations/linkedin/connect` | Connect a LinkedIn account |
 | `POST /api/pages/:id/linkedin` | Post a public page to LinkedIn `{commentary}` |
+
+## Widgets and the sandbox
+
+`:::widget` blocks hold an author's own HTML, CSS and JS. They never run on the app's origin. The same server answers a second hostname, `ELEMNT_SANDBOX_URL`, and on that hostname serves only `/w/*`:
+
+- `/w/:hash` is the widget, content-addressed by the sha256 of its code. Its CSP forbids network (unless the workspace is verified and lists hosts), eval, WebAssembly, workers, forms and nested frames, and only the public URL may frame it.
+- `/w/run/javascript` and `/w/run/python` (Pyodide from jsDelivr) run ```` ```js run ```` and ```` ```python run ```` blocks in throwaway frames.
+
+The reader frames them with `sandbox="allow-scripts"` only, so they get an opaque origin with no cookies or storage. On top of that: a label outside the frame with the author's name, click-to-run for public pages of unverified workspaces, loading only on screen, a heartbeat watchdog that stops frames that hog the CPU or navigate away, links only through a "you're leaving" dialog, a scan on save that refuses miners, WebAssembly, password fields and obfuscated code, a Report button, and a block switch that disables a widget on every page at once.
+
+Locally the sandbox defaults to `127.0.0.1` when the public URL is `localhost`. In production, point a separate domain at the server (for example `acme.elemntusercontent.com`) and set `ELEMNT_SANDBOX_URL`; without one, widgets show their summary only.
 
 Every save stores three bodies under their sha256: the source, the HTML and the Markdown.
 

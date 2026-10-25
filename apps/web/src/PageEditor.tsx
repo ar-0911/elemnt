@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, type OpenedPage, type SaveResult, type SuggestionDetail } from "./api";
+import { api, ApiError, type OpenedPage, type SaveResult, type SuggestionDetail, type WidgetFinding } from "./api";
 import { CommentsPanel } from "./CommentsPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { AssistBar } from "./AssistBar";
@@ -42,6 +42,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
   const saving = useRef<Promise<void> | undefined>(undefined);
 
   const compiled = useCompiler(source);
+  const [widgetFindings, setWidgetFindings] = useState<WidgetFinding[]>([]);
   const readOnly = !canEdit || Boolean(lockedOut);
 
   const load = useCallback(async () => {
@@ -259,7 +260,25 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
             </button>
           </div>
           {view === "page" ? (
-            <Preview ref={preview} html={compiled?.html ?? ""} onSelectText={(t) => (setQuote(t), setPanel("comments"))} />
+            <>
+              {widgetFindings.length > 0 && (
+                <ul className="widget-findings" role="status">
+                  {widgetFindings.map((f, i) => (
+                    <li key={i} data-severity={f.severity}>
+                      {f.severity === "error" ? "Won't publish: " : ""}
+                      {f.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Preview
+                ref={preview}
+                html={compiled?.html ?? ""}
+                widgets={compiled?.widgets ?? []}
+                onWidgetFindings={setWidgetFindings}
+                onSelectText={(t) => (setQuote(t), setPanel("comments"))}
+              />
+            </>
           ) : (
             <div className="preview" ref={preview}>
               <pre className="agent-md">{compiled?.markdown ?? ""}</pre>

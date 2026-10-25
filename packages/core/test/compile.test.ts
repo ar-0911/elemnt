@@ -85,9 +85,9 @@ describe("diagram", () => {
 
 describe("robustness", () => {
   it("reports unknown block components with their position and keeps the content", () => {
-    const doc = elemnt.parse("Intro\n\n:::chart\nData here\n:::");
-    expect(doc.diagnostics).toEqual([{ severity: "error", message: 'Unknown component "chart"', component: "chart", line: 3, column: 1 }]);
-    expect(elemnt.toHtml(doc)).toContain('<div data-elemnt-invalid="chart"><p>Data here</p></div>');
+    const doc = elemnt.parse("Intro\n\n:::carousel\nData here\n:::");
+    expect(doc.diagnostics).toEqual([{ severity: "error", message: 'Unknown component "carousel"', component: "carousel", line: 3, column: 1 }]);
+    expect(elemnt.toHtml(doc)).toContain('<div data-elemnt-invalid="carousel"><p>Data here</p></div>');
     expect(elemnt.toAgentMarkdown(doc)).toBe("Intro\n\nData here\n");
   });
 
@@ -150,7 +150,7 @@ describe("registry", () => {
   });
 
   it("every built-in snippet is valid on its own", () => {
-    for (const c of builtinComponents.filter((c) => c.name !== "tab" && c.name !== "step")) {
+    for (const c of builtinComponents.filter((c) => !["tab", "step", "side", "var", "calc"].includes(c.name))) {
       expect(elemnt.parse(c.authoring.snippet).diagnostics, c.name).toEqual([]);
     }
   });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Me, type Space, type TreePage } from "./api";
+import { api, ApiError, getMe, type Me, type Space, type TreePage } from "./api";
 import { PageEditor } from "./PageEditor";
 import { Palette } from "./Palette";
 import { Settings } from "./Settings";
@@ -49,8 +49,7 @@ export function App() {
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    api
-      .get<Me>("/api/me")
+    getMe()
       .then(setMe)
       .catch((e: ApiError) => {
         if (e.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;

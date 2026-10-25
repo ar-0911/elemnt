@@ -18,6 +18,13 @@ import { anthropicProvider, assistPrompt, EDIT_SCHEMA, editorSystemPrompt, type 
 import * as oauth from "./services/oauth.js";
 import * as suggestionsSvc from "./services/suggestions.js";
 import { handleMcp } from "./mcp.js";
+import { sandboxApp } from "./sandbox.js";
+import { editorApp } from "./web.js";
+import { querySourceService } from "./services/query.js";
+import * as widgetsSvc from "./services/widgets.js";
+import { widgetHash, sha256Hex } from "@elemnt/core";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { workspaces } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
@@ -32,7 +39,12 @@ export interface AppDeps {
   fetch?: typeof fetch;
   /** Injected so tests can stand in for Claude. */
   ai?: AiProvider;
+  /** The built editor (apps/web/dist), served at /app. */
+  webDir?: string;
 }
+
+/** Reports one IP or user may file per hour, so the report button can't be used to flood admins. */
+const REPORTS_PER_HOUR = 10;
 
 type Env = { Variables: { viewer: Viewer | undefined; workspaceId: string; nonce: string } };
 type Space = typeof spaces.$inferSelect;
@@ -49,6 +61,18 @@ export function createApp(deps: AppDeps) {
   let workspaceId: string | undefined;
 
   const app = new Hono<Env>();
+  const sandboxUrl = deps.config.sandboxUrl;
+  const queries = querySourceService(deps.db, box, doFetch);
+  const reportLog = new Map<string, number[]>();
+
+  // The sandbox origin is the same server under another hostname. It answers
+  // only /w/*: nothing else, cookies included, is reachable from there.
+  if (sandboxUrl) {
+    const sandbox = sandboxApp({ db: deps.db, blobs: deps.blobs, publicUrl: deps.config.publicUrl });
+    const host = new URL(sandboxUrl).host;
+    app.use(async (c, next) => (new URL(c.req.url).host === host ? sandbox.fetch(c.req.raw) : next()));
+  }
+  if (deps.webDir) app.route("/app", editorApp(deps.webDir, sandboxUrl));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message, ...err.details }, err.status);
@@ -102,7 +126,7 @@ export function createApp(deps: AppDeps) {
   }
 
   function html(c: Context<Env>, body: string, status: 200 | 404 = 200) {
-    c.header("Content-Security-Policy", contentSecurityPolicy(c.get("nonce")));
+    c.header("Content-Security-Policy", contentSecurityPolicy(c.get("nonce"), sandboxUrl));
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
     return c.html(body, status);
@@ -148,13 +172,137 @@ export function createApp(deps: AppDeps) {
   app.get("/api/me", async (c) => {
     const viewer = requireRole(c, "viewer");
     const account = await linkedin.getAccount(deps.db, viewer.userId);
-    return c.json({ ...viewer, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
+    return c.json({ ...viewer, sandboxUrl: sandboxUrl ?? null, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
   });
 
   app.post("/api/preview", async (c) => {
     requireRole(c, "viewer");
     const { source } = z.object({ source: z.string().max(500_000) }).parse(await c.req.json());
     return c.json(elemnt.compile(source));
+  });
+
+  // ---------- widgets (spec §7) ----------
+
+  /**
+   * The editor preview registers widgets as the author types so the sandbox
+   * can serve them. The server recomputes each hash and scans the code; code
+   * with error findings is stored but never served.
+   */
+  app.post("/api/widgets/preview", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const code = z.object({ html: z.string().max(200_000), css: z.string().max(200_000), js: z.string().max(200_000) });
+    const { widgets } = z.object({ widgets: z.array(code).max(20) }).parse(await c.req.json());
+    const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
+    if (!space) throw new HttpError(400, "Create a space first.");
+    const { verified } = await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"));
+    const out = widgets.map((w) => ({ hash: widgetHash(w), code: w, summary: "Preview", findings: widgetsSvc.scanWidget(w, { networkAllowed: verified }) }));
+    await widgetsSvc.storeWidgets(deps.db, deps.blobs, { spaceId: space.id, authorId: viewer.userId, widgets: out, findings: new Map(out.map((w) => [w.hash, w.findings])) });
+    return c.json({ widgets: out.map(({ hash, findings }) => ({ hash, findings })) });
+  });
+
+  app.post("/api/widgets/:hash/report", async (c) => {
+    const viewer = c.get("viewer");
+    const who = viewer?.userId ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "anonymous";
+    const now = Date.now();
+    const recent = (reportLog.get(who) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= REPORTS_PER_HOUR) throw new HttpError(429, "Too many reports. Try again later.");
+    reportLog.set(who, [...recent, now]);
+    const { reason, page } = z.object({ reason: z.string().trim().min(1).max(500), page: z.string().max(500).optional() }).parse(await c.req.json());
+    await widgetsSvc.reportWidget(deps.db, { hash: c.req.param("hash"), reason, ...(page ? { pageUrl: page } : {}), ...(viewer ? { reporterId: viewer.userId } : {}) });
+    return c.json({ reported: true });
+  });
+
+  app.get("/api/widgets/reports", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ reports: await widgetsSvc.listReports(deps.db, c.get("workspaceId")) });
+  });
+
+  app.post("/api/widgets/:hash/block", async (c) => {
+    const viewer = requireRole(c, "admin");
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(200) }).parse(await c.req.json());
+    await widgetsSvc.blockWidget(deps.db, { hash: c.req.param("hash"), reason, userId: viewer.userId });
+    return c.json({ blocked: true });
+  });
+
+  app.delete("/api/widgets/:hash/block", async (c) => {
+    requireRole(c, "admin");
+    await widgetsSvc.unblockWidget(deps.db, c.req.param("hash"));
+    return c.body(null, 204);
+  });
+
+  app.get("/api/settings/widgets", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ ...(await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))), selfVerify: Boolean(deps.config.widgetSelfVerify), sandboxUrl: sandboxUrl ?? null });
+  });
+
+  app.put("/api/settings/widgets", async (c) => {
+    requireRole(c, "admin");
+    const host = z.string().trim().toLowerCase().regex(/^(?!-)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "use a hostname such as api.example.com");
+    const body = z.object({ verified: z.boolean().optional(), hosts: z.array(host).max(20).optional() }).parse(await c.req.json());
+    if (body.verified !== undefined && !deps.config.widgetSelfVerify) throw new HttpError(403, "Verification is granted by the operator of this Elemnt server.");
+    await deps.db
+      .update(workspaces)
+      .set({ ...(body.verified !== undefined ? { widgetsVerified: body.verified } : {}), ...(body.hosts ? { widgetHosts: [...new Set(body.hosts)] } : {}) })
+      .where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json(await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId")));
+  });
+
+  // ---------- live data for :query ----------
+
+  app.get("/api/query", async (c) => {
+    const source = c.req.query("source") ?? "";
+    const key = c.req.query("key") ?? "";
+    if (!source || !key || key.length > 200) throw new HttpError(400, "Send source and key.");
+    c.header("Cache-Control", "private, max-age=30");
+    return c.json(await queries.value(c.get("workspaceId"), source, key, Boolean(c.get("viewer")?.role)));
+  });
+
+  app.get("/api/settings/query-sources", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ sources: await queries.list(c.get("workspaceId")) });
+  });
+
+  app.put("/api/settings/query-sources/:slug", async (c) => {
+    requireRole(c, "admin");
+    const body = z
+      .object({ url: z.string().url().max(2000), public: z.boolean().default(false), headers: z.record(z.string().max(100), z.string().max(4000)).nullable().optional() })
+      .parse(await c.req.json());
+    await queries.save(c.get("workspaceId"), { slug: c.req.param("slug"), url: body.url, public: body.public, ...(body.headers !== undefined ? { headers: body.headers } : {}) });
+    return c.json({ sources: await queries.list(c.get("workspaceId")) });
+  });
+
+  app.delete("/api/settings/query-sources/:slug", async (c) => {
+    requireRole(c, "admin");
+    await queries.remove(c.get("workspaceId"), c.req.param("slug"));
+    return c.body(null, 204);
+  });
+
+  // ---------- reader runtime ----------
+
+  let bundle: Promise<{ js: string; map: string | undefined; etag: string } | undefined> | undefined;
+  const loadBundle = () =>
+    (bundle ??= (async () => {
+      try {
+        const path = createRequire(import.meta.url).resolve("@elemnt/elements/bundle");
+        const js = await readFile(path, "utf8");
+        const map = await readFile(`${path}.map`, "utf8").catch(() => undefined);
+        return { js, map, etag: `"${sha256Hex(js).slice(0, 16)}"` };
+      } catch {
+        console.warn("@elemnt/elements isn't built; run pnpm --filter @elemnt/elements build. Pages render without interactivity.");
+        return undefined;
+      }
+    })());
+
+  app.get("/assets/elements.js", async (c) => {
+    const b = await loadBundle();
+    if (!b) return c.text("// @elemnt/elements is not built\nexport function enhance() {}\n", 200, { "Content-Type": "text/javascript; charset=utf-8" });
+    if (c.req.header("if-none-match") === b.etag) return c.body(null, 304);
+    return c.body(b.js, 200, { "Content-Type": "text/javascript; charset=utf-8", ETag: b.etag, "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" });
+  });
+
+  app.get("/assets/elements.js.map", async (c) => {
+    const b = await loadBundle();
+    return b?.map ? c.body(b.map, 200, { "Content-Type": "application/json" }) : c.text("Not found.", 404);
   });
 
   app.get("/api/spaces", async (c) => {
@@ -602,7 +750,10 @@ export function createApp(deps: AppDeps) {
     const canonical = pageUrl(space, path);
     const isPublic = space.visibility === "public";
     const viewer = c.get("viewer");
-    const body = await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
+    const stored = await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
+    const body = view === "page" ? await widgetsSvc.decorateWidgets(deps.db, stored) : stored;
+    // Members and verified workspaces run widgets at once; other public readers click to run.
+    const autorun = Boolean(viewer?.role) || !isPublic || (await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))).verified;
     return html(
       c,
       renderShell({
@@ -614,6 +765,8 @@ export function createApp(deps: AppDeps) {
         space,
         view,
         body,
+        ...(sandboxUrl ? { sandboxUrl } : {}),
+        autorun,
         ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic
           ? {

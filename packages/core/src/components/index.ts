@@ -6,7 +6,39 @@ import { query } from "./query.js";
 import { runbook, step } from "./runbook.js";
 import { steps } from "./steps.js";
 import { tab, tabs } from "./tabs.js";
+import { annotate } from "./annotate.js";
+import { chart } from "./chart.js";
+import { codegroup } from "./codegroup.js";
+import { compare, side } from "./compare.js";
+import { datagrid } from "./datagrid.js";
+import { calc, explore, variable } from "./explore.js";
+import { quiz } from "./quiz.js";
+import { term } from "./term.js";
+import { widget } from "./widget.js";
 
-export { callout, details, diagram, query, runbook, step, steps, tab, tabs };
+export { annotate, calc, callout, chart, codegroup, compare, datagrid, details, diagram, explore, query, quiz, runbook, side, step, steps, tab, tabs, term, variable, widget };
+export { widgetCode, widgetHash, type WidgetCode } from "./widget.js";
 
-export const builtinComponents: readonly AnyComponent[] = [callout, tabs, tab, steps, details, diagram, runbook, step, query];
+export const builtinComponents: readonly AnyComponent[] = [
+  callout,
+  tabs,
+  tab,
+  codegroup,
+  steps,
+  details,
+  diagram,
+  chart,
+  datagrid,
+  explore,
+  variable,
+  calc,
+  annotate,
+  quiz,
+  compare,
+  side,
+  term,
+  widget,
+  runbook,
+  step,
+  query,
+];
