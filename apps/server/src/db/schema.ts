@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigserial, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, bigserial, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -22,6 +22,8 @@ export const workspaces = pgTable("workspaces", {
   widgetsVerified: boolean("widgets_verified").notNull().default(false),
   /** Hosts widgets may connect to (verified workspaces only), e.g. ["api.acme.dev"]. */
   widgetHosts: jsonb("widget_hosts").$type<string[]>().notNull().default([]),
+  /** Lets signed-out readers of public pages use Ask the page (it spends the workspace's Claude key). */
+  askPublic: boolean("ask_public").notNull().default(false),
   /** Named live-data sources for `:query`, configured by admins. */
   querySources: jsonb("query_sources").$type<Record<string, QuerySource>>().notNull().default({}),
   createdAt: createdAt(),
@@ -196,8 +198,8 @@ export const suggestions = pgTable(
     pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
     baseRevisionId: text("base_revision_id").notNull(),
     proposedHash: text("proposed_hash").notNull(),
-    /** Who asked for it: "assist" (editor ⌘I), "mcp" (an agent), "drift" (repo check). */
-    origin: text("origin", { enum: ["assist", "mcp", "drift"] }).notNull(),
+    /** Who asked for it: "assist" (editor ⌘I), "mcp" (an agent), "drift" (repo check), "ask" (reader questions). */
+    origin: text("origin", { enum: ["assist", "mcp", "drift", "ask"] }).notNull(),
     authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
     summary: text("summary").notNull(),
     status: text("status", { enum: suggestionStatuses }).notNull().default("open"),
@@ -287,4 +289,95 @@ export const repoLinks = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("repo_links_repo").on(t.repo)],
+);
+
+/**
+ * Ask the page: every question a reader asked, with the answer Claude gave.
+ * Questions the page couldn't answer ("gaps") are what editors turn into
+ * suggestions, and where they cluster is part of the confusion heatmap.
+ */
+export const pageQuestions = pgTable(
+  "page_questions",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    revisionId: text("revision_id"),
+    question: text("question").notNull(),
+    /** Text the reader selected when asking, if any. */
+    quote: text("quote"),
+    /** Heading id of the section the question is about. */
+    section: text("section"),
+    /** The answer as Elemnt source; its HTML is compiled on read. */
+    answer: text("answer").notNull(),
+    /** True when the page didn't cover the question. */
+    gap: boolean("gap").notNull().default(false),
+    /** utm_source of the visit ("direct" when none), to split out e.g. LinkedIn readers. */
+    source: text("source").notNull().default("direct"),
+    askerId: text("asker_id").references(() => users.id, { onDelete: "set null" }),
+    status: text("status", { enum: ["open", "resolved"] }).notNull().default("open"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("page_questions_page").on(t.pageId, t.createdAt)],
+);
+
+/** Aggregated reading signals per section: views, time spent, where readers left. No per-reader data. */
+export const sectionStats = pgTable(
+  "section_stats",
+  {
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    section: text("section").notNull(),
+    views: integer("views").notNull().default(0),
+    dwellMs: bigint("dwell_ms", { mode: "number" }).notNull().default(0),
+    exits: integer("exits").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.pageId, t.source, t.section] })],
+);
+
+export const readingLevels = ["newcomer", "engineer", "exec"] as const;
+export type ReadingLevel = (typeof readingLevels)[number];
+
+/**
+ * Reading levels: the same page rewritten for a newcomer, an engineer or an
+ * executive. Claude writes a version from the published page; an editor
+ * approves it before readers see it. Bodies live in the blob store.
+ */
+export const pageLevels = pgTable(
+  "page_levels",
+  {
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    level: text("level", { enum: readingLevels }).notNull(),
+    /** The published revision this version was written from; older means possibly stale. */
+    baseRevisionId: text("base_revision_id").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    htmlHash: text("html_hash").notNull(),
+    markdownHash: text("markdown_hash").notNull(),
+    status: text("status", { enum: ["pending", "approved"] }).notNull().default("pending"),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    approvedBy: text("approved_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.pageId, t.level] })],
+);
+
+/** Make me a component: widgets Claude built from a description, saved for the whole workspace. */
+export const libraryComponents = pgTable(
+  "library_components",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    /** What it's for, shown in the / menu and the authoring guide. */
+    description: text("description").notNull(),
+    /** The widget's summary: what agents read in place of the widget. */
+    summary: text("summary").notNull(),
+    html: text("html").notNull(),
+    css: text("css").notNull(),
+    js: text("js").notNull(),
+    height: integer("height").notNull().default(320),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("library_components_slug").on(t.workspaceId, t.slug)],
 );

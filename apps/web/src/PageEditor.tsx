@@ -6,11 +6,15 @@ import { AssistBar } from "./AssistBar";
 import { Preview } from "./Preview";
 import { SuggestionsPanel } from "./SuggestionsPanel";
 import { RepoPanel } from "./RepoPanel";
+import { InsightsPanel } from "./InsightsPanel";
+import { LevelsPanel } from "./LevelsPanel";
+import { ComponentMaker } from "./ComponentMaker";
+import { workspaceComponents } from "./SourceEditor";
 import { SourceEditor, type SourceEditorHandle } from "./SourceEditor";
 import { useCompiler } from "./useCompiler";
 
 type Mode = "split" | "source" | "preview";
-type Panel = "none" | "history" | "comments" | "suggestions" | "repo";
+type Panel = "none" | "history" | "comments" | "suggestions" | "repo" | "insights" | "levels";
 type Status = { kind: "idle" | "saving" | "saved" | "error" | "conflict" | "published"; text: string };
 
 const AUTOSAVE_MS = 1500;
@@ -44,6 +48,17 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
 
   const compiled = useCompiler(source);
   const [widgetFindings, setWidgetFindings] = useState<WidgetFinding[]>([]);
+  const [making, setMaking] = useState(false);
+
+  // The / menu offers the workspace's saved components and "make one".
+  useEffect(() => {
+    if (!canEdit) return;
+    workspaceComponents.make = () => setMaking(true);
+    void api.get<typeof workspaceComponents.items>("/api/components").then((items) => (workspaceComponents.items = items)).catch(() => {});
+    return () => {
+      workspaceComponents.make = undefined;
+    };
+  }, [canEdit]);
   const readOnly = !canEdit || Boolean(lockedOut);
 
   const load = useCallback(async () => {
@@ -213,6 +228,12 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
           <button type="button" className={`btn ghost${panel === "comments" ? " on" : ""}`} onClick={() => setPanel(panel === "comments" ? "none" : "comments")}>
             Comments
           </button>
+          <button type="button" className={`btn ghost${panel === "insights" ? " on" : ""}`} onClick={() => setPanel(panel === "insights" ? "none" : "insights")}>
+            Insights
+          </button>
+          <button type="button" className={`btn ghost${panel === "levels" ? " on" : ""}`} onClick={() => setPanel(panel === "levels" ? "none" : "levels")}>
+            Levels
+          </button>
           <button type="button" className={`btn ghost${panel === "repo" ? " on" : ""}`} onClick={() => setPanel(panel === "repo" ? "none" : "repo")}>
             Repo
           </button>
@@ -308,9 +329,25 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
             onApplied={() => void load().then(onChanged)}
           />
         )}
+        {panel === "insights" && <InsightsPanel pageId={pageId} onSuggested={(id) => (setSuggestionsKey((k) => k + 1), setPanel("suggestions"), void id)} />}
+        {panel === "levels" && <LevelsPanel pageId={pageId} published={Boolean(opened.page.publishedRevisionId)} />}
         {panel === "repo" && <RepoPanel pageId={pageId} canEdit={canEdit} onSuggested={() => setSuggestionsKey((k) => k + 1)} />}
         {panel === "comments" && <CommentsPanel pageId={pageId} quote={quote} clearQuote={() => setQuote(undefined)} />}
       </div>
+      {making && (
+        <ComponentMaker
+          onClose={() => setMaking(false)}
+          onInsert={(snippet) => {
+            const v = editor.current?.view;
+            if (v) {
+              const at = v.state.selection.main.head;
+              v.dispatch({ changes: { from: at, insert: `\n${snippet}\n` } });
+              v.focus();
+            }
+            void api.get<typeof workspaceComponents.items>("/api/components").then((items) => (workspaceComponents.items = items));
+          }}
+        />
+      )}
     </main>
   );
 }

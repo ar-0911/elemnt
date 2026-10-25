@@ -94,6 +94,24 @@ function WidgetsSection() {
   );
 }
 
+/** Whether signed-out readers of public pages may use Ask the page (it spends the workspace's key). */
+function AskSection() {
+  const [on, setOn] = useState<boolean>();
+  useEffect(() => {
+    void api.get<{ askPublic: boolean }>("/api/settings/ask").then((r) => setOn(r.askPublic)).catch(() => {});
+  }, []);
+  if (on === undefined) return null;
+  return (
+    <>
+      <h2>Ask the page</h2>
+      <p className="hint">Members can always ask questions on pages. Turning this on lets anyone reading a public page ask too, using this workspace's Claude key (10 questions per reader per hour).</p>
+      <label className="row">
+        <input type="checkbox" checked={on} onChange={(e) => void api.put<{ askPublic: boolean }>("/api/settings/ask", { askPublic: e.target.checked }).then((r) => setOn(r.askPublic))} /> Public readers can ask
+      </label>
+    </>
+  );
+}
+
 /** Workspace settings: the Anthropic API key, MCP connection and widget trust. */
 export function Settings({ onClose }: { onClose(): void }) {
   const [status, setStatus] = useState<AiStatus>();
@@ -150,6 +168,7 @@ export function Settings({ onClose }: { onClose(): void }) {
         <p className="hint">
           Claude Code: <code>claude mcp add --transport http elemnt {location.origin}/mcp</code>. In Claude, add a custom connector with the URL <code>{location.origin}/mcp</code>. Both sign in through Elemnt; anything they write lands as a draft or suggestion.
         </p>
+        <AskSection />
         <WidgetsSection />
       </div>
     </div>

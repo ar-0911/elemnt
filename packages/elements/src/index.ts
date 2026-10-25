@@ -39,4 +39,7 @@ export function enhance(root: ParentNode, options: EnhanceOptions = {}): void {
 }
 
 export { isDark, onThemeChange } from "./theme.js";
+export { mountAsk, type AskOptions } from "./ask.js";
+export { trackReading } from "./signals.js";
+export { mountDeck } from "./present.js";
 export type { WidgetOptions };

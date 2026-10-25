@@ -46,7 +46,7 @@ describe("reader", () => {
     const { html, res, hash } = await publishedHash();
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
     expect(html).toContain('data-author="Owner"');
-    expect(html).toContain('import { enhance } from "/assets/elements.js"');
+    expect(html).toContain('from "/assets/elements.js"');
     expect(html).toContain('"sandboxUrl":"https://sandbox.example.com"');
     // Public page, unverified workspace, anonymous reader: click to run.
     expect(html).toContain('"autorun":false');

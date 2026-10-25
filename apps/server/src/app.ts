@@ -9,6 +9,7 @@ import type { BlobStore } from "./lib/blobs.js";
 import type { Config } from "./lib/config.js";
 import { SecretBox, safeEqual } from "./lib/crypto.js";
 import { contentSecurityPolicy, escapeHtml, renderShell, renderSimple } from "./render/page.js";
+import { renderDeck } from "./render/deck.js";
 import { HttpError } from "./services/errors.js";
 import * as linkedin from "./services/linkedin.js";
 import * as pagesSvc from "./services/pages.js";
@@ -23,6 +24,10 @@ import { editorApp } from "./web.js";
 import { querySourceService } from "./services/query.js";
 import * as widgetsSvc from "./services/widgets.js";
 import * as reposSvc from "./services/repos.js";
+import * as askSvc from "./services/ask.js";
+import * as levelsSvc from "./services/levels.js";
+import * as librarySvc from "./services/library.js";
+import * as insightsSvc from "./services/insights.js";
 import { githubClient, normalizeRepo, verifyWebhook } from "./services/github.js";
 import { widgetHash, sha256Hex } from "@elemnt/core";
 import { readFile } from "node:fs/promises";
@@ -55,6 +60,10 @@ type Space = typeof spaces.$inferSelect;
 
 const TOKEN_COOKIE = "elemnt_token";
 const LI_STATE_COOKIE = "elemnt_li_state";
+
+const LINKEDIN_SYSTEM = `You write LinkedIn posts that share a documentation page or project write-up. The author will edit your draft before posting.
+
+Shape: a one-line hook that names the problem or the surprising result (no clickbait, no "I'm excited to share"), a blank line, three short takeaways from the page as lines starting with "→ ", a blank line, one sentence on who should read it, then the link. Plain text only: no Markdown, no hashtags unless one is genuinely useful, at most one emoji. Under 1,200 characters. Use only facts from the page, in the author's first person.`;
 
 const BADGE = `<svg xmlns="http://www.w3.org/2000/svg" width="138" height="20" role="img" aria-label="Explained on Elemnt"><title>Explained on Elemnt</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="138" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="75" height="20" fill="#555"/><rect x="75" width="63" height="20" fill="#2949c7"/><rect width="138" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11"><text x="37.5" y="14">explained</text><text x="105.5" y="14">on Elemnt</text></g></svg>`;
 
@@ -187,6 +196,189 @@ export function createApp(deps: AppDeps) {
     requireRole(c, "viewer");
     const { source } = z.object({ source: z.string().max(500_000) }).parse(await c.req.json());
     return c.json(elemnt.compile(source));
+  });
+
+  // ---------- v2: ask the page, reading levels, components, heatmap ----------
+
+  /** A published page the current visitor may read, for reader-side endpoints. */
+  async function readablePage(c: Context<Env>) {
+    const page = await pagesSvc.getPage(deps.db, c.req.param("id")!).catch(() => undefined);
+    const space = page && (await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.id, page.spaceId) }));
+    if (!page?.publishedRevisionId || !space || space.workspaceId !== c.get("workspaceId") || !canRead(c.get("viewer"), space)) throw new HttpError(404, "Not found.");
+    return { page, space };
+  }
+
+  const askLog = new Map<string, number[]>();
+  const signalLog = new Map<string, number[]>();
+  function limit(log: Map<string, number[]>, who: string, perHour: number, message: string) {
+    const now = Date.now();
+    const recent = (log.get(who) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= perHour) throw new HttpError(429, message);
+    log.set(who, [...recent, now]);
+  }
+  const visitor = (c: Context<Env>) => c.get("viewer")?.userId ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "anonymous";
+
+  async function askEnabled(c: Context<Env>, isPublicSpace: boolean) {
+    if (!(await aiKey(c.get("workspaceId")))) return false;
+    if (c.get("viewer")?.role) return true;
+    const [ws] = await deps.db.select({ askPublic: workspaces.askPublic }).from(workspaces).where(eq(workspaces.id, c.get("workspaceId")));
+    return isPublicSpace && Boolean(ws?.askPublic);
+  }
+
+  app.post("/api/pages/:id/ask", async (c) => {
+    const { page, space } = await readablePage(c);
+    if (!(await askEnabled(c, space.visibility === "public"))) throw new HttpError(403, "Ask the page isn't turned on here.");
+    limit(askLog, visitor(c), c.get("viewer")?.role ? 60 : 10, "You've asked a lot of questions. Try again in a while.");
+    const body = z.object({ question: z.string().trim().min(3).max(500), quote: z.string().trim().max(1000).optional(), source: z.string().max(64).optional() }).parse(await c.req.json());
+    const viewer = c.get("viewer");
+    const result = await askSvc.askPage(pageDeps, (await aiFor(c.get("workspaceId")))!, {
+      pageId: page.id,
+      question: body.question,
+      ...(body.quote ? { quote: body.quote } : {}),
+      source: body.source?.replace(/[^a-z0-9_.-]/gi, "") || "direct",
+      ...(viewer ? { askerId: viewer.userId } : {}),
+      spaceIds: await askSvc.groundingSpaces(deps, c.get("workspaceId"), space.id, Boolean(viewer?.role)),
+    });
+    return c.json(result);
+  });
+
+  app.get("/api/pages/:id/questions", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    return c.json(await askSvc.listQuestions(deps, page.id, c.req.query("status") === "all" ? "all" : "open"));
+  });
+
+  app.post("/api/pages/:id/questions/suggest", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const { ids } = z.object({ ids: z.array(z.string()).min(1).max(30) }).parse(await c.req.json());
+    return c.json(await askSvc.suggestFromQuestions(pageDeps, await aiClient(c), { pageId: page.id, ids, userId: viewer.userId }), 201);
+  });
+
+  app.post("/api/pages/:id/questions/resolve", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    const { ids } = z.object({ ids: z.array(z.string()).min(1).max(200) }).parse(await c.req.json());
+    await askSvc.resolveQuestions(deps, page.id, ids);
+    return c.json({ resolved: ids.length });
+  });
+
+  app.get("/api/settings/ask", async (c) => {
+    requireRole(c, "admin");
+    const [ws] = await deps.db.select({ askPublic: workspaces.askPublic }).from(workspaces).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json({ askPublic: Boolean(ws?.askPublic) });
+  });
+
+  app.put("/api/settings/ask", async (c) => {
+    requireRole(c, "admin");
+    const { askPublic } = z.object({ askPublic: z.boolean() }).parse(await c.req.json());
+    await deps.db.update(workspaces).set({ askPublic }).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json({ askPublic });
+  });
+
+  /** Reading signals from the reader (sendBeacon, so the body arrives as text). */
+  app.post("/api/pages/:id/signals", async (c) => {
+    const { page } = await readablePage(c);
+    limit(signalLog, visitor(c), 300, "Too many signals.");
+    let raw: unknown;
+    try {
+      raw = JSON.parse((await c.req.text()).slice(0, 20_000));
+    } catch {
+      throw new HttpError(400, "Send JSON.");
+    }
+    const body = z.object({ sections: z.record(z.string().max(90), z.number()), exit: z.string().max(90).nullable().optional(), source: z.string().max(64).optional() }).parse(raw);
+    await insightsSvc.recordSignals(deps.db, page.id, body);
+    return c.body(null, 204);
+  });
+
+  app.get("/api/pages/:id/insights", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    if (!page.publishedRevisionId) return c.json({ sections: [], questionsWithoutSection: 0, sources: [] });
+    const html = await pagesSvc.readRevision(deps, page.publishedRevisionId, "html");
+    const source = c.req.query("source");
+    return c.json(await insightsSvc.pageInsights(deps.db, { pageId: page.id, html, ...(source ? { source } : {}) }));
+  });
+
+  function levelParam(c: Context<Env>) {
+    const level = c.req.param("level") ?? "";
+    if (!levelsSvc.isLevel(level)) throw new HttpError(404, "Levels are newcomer, engineer and exec.");
+    return level;
+  }
+
+  app.get("/api/pages/:id/levels", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    return c.json(await levelsSvc.listLevels(deps, page.id));
+  });
+
+  app.get("/api/pages/:id/levels/:level", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    const level = await levelsSvc.getLevel(pageDeps, page.id, levelParam(c), true);
+    if (!level) throw new HttpError(404, "Not generated yet.");
+    return c.json(level);
+  });
+
+  app.post("/api/pages/:id/levels/:level/generate", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    return c.json(await levelsSvc.generateLevel(pageDeps, await aiClient(c), { pageId: page.id, level: levelParam(c), userId: viewer.userId }), 201);
+  });
+
+  app.put("/api/pages/:id/levels/:level", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const { source } = z.object({ source: z.string().min(1).max(500_000) }).parse(await c.req.json());
+    if (!page.publishedRevisionId) throw new HttpError(400, "Publish the page first.");
+    await levelsSvc.saveLevel(pageDeps, { pageId: page.id, level: levelParam(c), source, baseRevisionId: page.publishedRevisionId, userId: viewer.userId });
+    return c.json(await levelsSvc.getLevel(pageDeps, page.id, levelParam(c), true));
+  });
+
+  app.post("/api/pages/:id/levels/:level/approve", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    await levelsSvc.approveLevel(deps, page.id, levelParam(c), viewer.userId);
+    return c.json(await levelsSvc.listLevels(deps, page.id));
+  });
+
+  app.delete("/api/pages/:id/levels/:level", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    await levelsSvc.deleteLevel(deps, page.id, levelParam(c));
+    return c.body(null, 204);
+  });
+
+  const componentBody = z.object({
+    name: z.string().trim().min(1).max(100),
+    slug: z.string().trim().min(1).max(63),
+    description: z.string().trim().max(500),
+    summary: z.string().trim().min(10).max(1000),
+    html: z.string().max(100_000),
+    css: z.string().max(100_000),
+    js: z.string().max(100_000),
+    height: z.number().int().min(40).max(2000),
+  });
+
+  app.get("/api/components", async (c) => {
+    requireRole(c, "viewer");
+    const items = await librarySvc.listComponents(deps.db, c.get("workspaceId"));
+    return c.json(items.map((i) => ({ ...i, snippet: librarySvc.widgetSnippet(i) })));
+  });
+
+  /** Make me a component: Claude drafts it; it is registered for preview but not saved. */
+  app.post("/api/components/generate", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const { description } = z.object({ description: z.string().trim().min(5).max(2000) }).parse(await c.req.json());
+    const draft = await librarySvc.generateComponent(await aiClient(c), description);
+    const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
+    const code = { html: draft.html, css: draft.css, js: draft.js };
+    const hash = widgetHash(code);
+    if (space) await widgetsSvc.storeWidgets(deps.db, deps.blobs, { spaceId: space.id, authorId: viewer.userId, widgets: [{ hash, code, summary: draft.summary }], findings: new Map([[hash, draft.findings]]) });
+    return c.json({ ...draft, hash, snippet: librarySvc.widgetSnippet(draft) });
+  });
+
+  app.post("/api/components", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const draft = componentBody.parse(await c.req.json());
+    const row = await librarySvc.saveComponent(deps.db, { workspaceId: c.get("workspaceId"), userId: viewer.userId, draft });
+    return c.json({ ...row, snippet: librarySvc.widgetSnippet(row) }, 201);
+  });
+
+  app.delete("/api/components/:cid", async (c) => {
+    requireRole(c, "editor");
+    await librarySvc.deleteComponent(deps.db, c.get("workspaceId"), c.req.param("cid"));
+    return c.body(null, 204);
   });
 
   // ---------- repo explainers ----------
@@ -581,6 +773,22 @@ export function createApp(deps: AppDeps) {
     return c.json(result, 201);
   });
 
+  /** Claude drafts the LinkedIn post (hook, three takeaways, link) for the author to edit. */
+  app.post("/api/pages/:id/linkedin/draft", async (c) => {
+    const { page, space } = await pageWithAccess(c, "editor");
+    if (!page.publishedRevisionId) throw new HttpError(400, "Publish the page first.");
+    const markdown = await pagesSvc.readRevision(deps, page.publishedRevisionId, "markdown");
+    const url = linkedin.trackedUrl(pageUrl(space, page.path), `${space.slug}/${page.path}`);
+    const out = await (await aiClient(c)).json<{ commentary: string }>({
+      system: LINKEDIN_SYSTEM,
+      prompt: `<page>\n${markdown.slice(0, 30_000)}\n</page>\n\nWrite the post. End with this link on its own line: ${url}`,
+      schema: { type: "object", properties: { commentary: { type: "string" } }, required: ["commentary"], additionalProperties: false },
+      effort: "low",
+      maxTokens: 4000,
+    });
+    return c.json({ commentary: out.commentary.slice(0, 3000) });
+  });
+
   // ---------- reader ----------
 
 
@@ -832,21 +1040,33 @@ export function createApp(deps: AppDeps) {
     if (!page?.publishedRevisionId) throw new HttpError(404, "Not found.");
 
     const url = new URL(c.req.url);
-    const view = asMarkdownFile || wantsMarkdown(c) ? "file" : url.searchParams.get("view") === "markdown" ? "markdown" : "page";
+    const requested = url.searchParams.get("view");
+    const view = asMarkdownFile || wantsMarkdown(c) ? "file" : requested === "markdown" ? "markdown" : "page";
     await recordView(deps.db, { pageId: page.id, format: view === "page" ? "html" : "markdown", url, referrer: c.req.header("referer") }).catch((err) =>
       console.error("recordView failed", err),
     );
 
-    if (view === "file") return markdown(c, await pagesSvc.readRevision(deps, page.publishedRevisionId, "markdown"));
+    // Reading levels: an approved rewrite for another audience, chosen with ?level=.
+    const levelName = url.searchParams.get("level") ?? "";
+    const level = levelsSvc.isLevel(levelName) ? await levelsSvc.getLevel(pageDeps, page.id, levelName, false) : undefined;
+    if (view === "file") return markdown(c, level?.markdown ?? (await pagesSvc.readRevision(deps, page.publishedRevisionId, "markdown")));
 
     const canonical = pageUrl(space, path);
     const isPublic = space.visibility === "public";
     const viewer = c.get("viewer");
-    const stored = await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
+
+    if (requested === "present" || requested === "carousel") {
+      const source = level?.source ?? (await pagesSvc.readRevision(deps, page.publishedRevisionId, "source"));
+      const slides = await Promise.all(elemnt.toSlides(elemnt.parse(source)).map(async (sl) => ({ ...sl, html: await widgetsSvc.decorateWidgets(deps.db, sl.html) })));
+      return html(c, renderDeck({ nonce: c.get("nonce"), title: page.title, canonicalUrl: canonical, slides, mode: requested, ...(sandboxUrl ? { sandboxUrl } : {}) }));
+    }
+
+    const stored = level ? (view === "page" ? level.html : level.markdown) : await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
     const body = view === "page" ? await widgetsSvc.decorateWidgets(deps.db, stored) : stored;
     // Members and verified workspaces run widgets at once; other public readers click to run.
     const repoLink = await reposSvc.getLink(deps, page.id);
     const autorun = Boolean(viewer?.role) || !isPublic || (await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))).verified;
+    const levels = await levelsSvc.approvedLevels(deps, page.id);
     return html(
       c,
       renderShell({
@@ -861,6 +1081,10 @@ export function createApp(deps: AppDeps) {
         ...(sandboxUrl ? { sandboxUrl } : {}),
         autorun,
         ...(repoLink ? { repo: repoLink } : {}),
+        pageId: page.id,
+        ask: await askEnabled(c, isPublic),
+        levels,
+        ...(level ? { level: level.level } : {}),
         ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic
           ? {

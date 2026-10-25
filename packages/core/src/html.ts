@@ -104,12 +104,49 @@ export interface HtmlOptions {
   unsafeSkipSanitize?: boolean;
 }
 
+/** URL-safe slug of a heading's text, as GitHub makes them. */
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\p{L}\p{N}\s-]/gu, "")
+    .replace(/\s+/g, "-")
+    .slice(0, 80) || "section";
+}
+
+/**
+ * Gives h2 and h3 a stable id from their text, after sanitizing (which would
+ * otherwise prefix it). The ids are anchors for links, and the sections the
+ * reader reports engagement for.
+ */
+function addHeadingIds(root: HastRoot): HastRoot {
+  const seen = new Map<string, number>();
+  const walk = (nodes: HastRoot["children"]) => {
+    for (const n of nodes) {
+      if (n.type !== "element") continue;
+      if (n.tagName === "h2" || n.tagName === "h3") {
+        const base = slugify(hastText(n));
+        const count = seen.get(base) ?? 0;
+        seen.set(base, count + 1);
+        n.properties = { ...n.properties, id: count ? `${base}-${count + 1}` : base };
+      } else walk(n.children);
+    }
+  };
+  walk(root.children);
+  return root;
+}
+
+function hastText(n: Element | HastRoot["children"][number]): string {
+  if (n.type === "text") return n.value;
+  return "children" in n ? n.children.map((c) => hastText(c as Element)).join("") : "";
+}
+
 export function toHtmlTree(doc: ParsedDocument, registry: ReadonlyMap<string, AnyComponent>, options: HtmlOptions = {}): HastRoot {
   const handler = directiveHandler(registry);
   const hast = toHast(structuredClone(doc.tree), {
     handlers: { code: codeHandler, containerDirective: handler, leafDirective: handler, textDirective: handler },
   }) as HastRoot;
-  return options.unsafeSkipSanitize ? hast : (sanitize(hast, elemntSanitizeSchema) as HastRoot);
+  return options.unsafeSkipSanitize ? hast : addHeadingIds(sanitize(hast, elemntSanitizeSchema) as HastRoot);
 }
 
 export function toHtml(doc: ParsedDocument, registry: ReadonlyMap<string, AnyComponent>, options: HtmlOptions = {}): string {

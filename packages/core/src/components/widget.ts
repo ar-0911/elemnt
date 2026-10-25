@@ -65,7 +65,7 @@ export const widget: ElemntComponent<z.infer<typeof props>> = {
     return [{ type: "paragraph", children: [{ type: "strong", children: [{ type: "text", value: title ? `Interactive widget (${title}):` : "Interactive widget:" }] }, { type: "text", value: ` ${summary}` }] }];
   },
   authoring: {
-    doc: "Your own HTML/CSS/JS, run in a sandbox with no network access. summary is required: it is all agents and no-JS readers get. The bridge gives you elemnt.onTheme(cb), elemnt.resize(px), elemnt.openLink(url) and elemnt.copy(text).",
+    doc: "Your own HTML/CSS/JS, run in a sandbox with no network access. summary is required: it is all agents and no-JS readers get. The frame grows to fit its content. The bridge gives you elemnt.onTheme(cb) (called with true for dark), elemnt.open(url) (asks the reader first) and elemnt.copy(text).",
     snippet:
       ':::widget{height=220 summary="A slider that shows how monthly cost grows with the number of seats: $8 per seat."}\n```html\n<input id="s" type="range" min="1" max="200" value="20"> <output id="o"></output>\n```\n```js\nconst s = document.getElementById("s"), o = document.getElementById("o");\nconst draw = () => (o.textContent = `${s.value} seats: $${s.value * 8}/month`);\ns.oninput = draw; draw();\n```\n:::',
   },

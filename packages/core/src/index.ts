@@ -23,7 +23,7 @@ function collectWidgets(doc: ParsedDocument): CompileResult["widgets"] {
 
 export * from "./types.js";
 export * from "./components/index.js";
-export { elemntSanitizeSchema } from "./html.js";
+export { elemntSanitizeSchema, slugify } from "./html.js";
 export { contentCss, themeTokensCss } from "./theme.js";
 export { evaluate, exprVariables, formatNumber, parseExpr, ExprError } from "./expr.js";
 export { sha256Hex } from "./sha256.js";

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError, type SuggestionDetail, type SuggestionSummary } from "./api";
 
-const ORIGIN: Record<SuggestionSummary["origin"], string> = { assist: "Claude (editor)", mcp: "Claude (agent)", drift: "Repo check" };
+const ORIGIN: Record<SuggestionSummary["origin"], string> = { assist: "Claude (editor)", mcp: "Claude (agent)", drift: "Repo check", ask: "Reader questions" };
 
 interface Props {
   pageId: string;

@@ -127,7 +127,7 @@ export interface Hunk {
 export interface SuggestionSummary {
   id: string;
   summary: string;
-  origin: "assist" | "mcp" | "drift";
+  origin: "assist" | "mcp" | "drift" | "ask";
   status: "open" | "accepted" | "rejected";
   createdAt: string;
   authorName: string | null;

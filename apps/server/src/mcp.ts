@@ -10,6 +10,8 @@ import { applyEdits, createSuggestion } from "./services/suggestions.js";
 import type { GitHubClient } from "./services/github.js";
 import { normalizeRepo } from "./services/github.js";
 import * as reposSvc from "./services/repos.js";
+import * as levelsSvc from "./services/levels.js";
+import { libraryGuide, listComponents } from "./services/library.js";
 import { hasRole, type Viewer } from "./services/workspace.js";
 
 interface McpDeps extends pagesSvc.PageDeps {
@@ -109,12 +111,20 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
     {
       title: "Read a page",
       description:
-        'Reads a page. format "markdown" (default) is the published page as plain Markdown, best for answering questions. format "source" is the editable source with Elemnt directives, including any unpublished draft; read it before suggest_edit.',
-      inputSchema: { space: z.string(), path: z.string(), format: z.enum(["markdown", "source"]).default("markdown") },
+        'Reads a page. format "markdown" (default) is the published page as plain Markdown, best for answering questions. format "source" is the editable source with Elemnt directives, including any unpublished draft; read it before suggest_edit. level picks an approved rewrite for a newcomer, an engineer or an executive, when the page has one (markdown only).',
+      inputSchema: { space: z.string(), path: z.string(), format: z.enum(["markdown", "source"]).default("markdown"), level: z.enum(["newcomer", "engineer", "exec"]).optional() },
       annotations: { readOnlyHint: true },
     },
-    tool(async ({ space: slug, path, format }: { space: string; path: string; format: "markdown" | "source" }) => {
+    tool(async ({ space: slug, path, format, level }: { space: string; path: string; format: "markdown" | "source"; level?: "newcomer" | "engineer" | "exec" }) => {
       const { page: p } = await page(slug, path);
+      if (level && format === "markdown") {
+        const lv = await levelsSvc.getLevel(deps, p.id, level, false);
+        if (!lv) {
+          const have = (await levelsSvc.approvedLevels(deps, p.id)).map((l) => l.level);
+          return fail(`No approved ${level} version of this page. Available: ${have.join(", ") || "none"}.`);
+        }
+        return text(`<!-- elemnt: ${slug}/${p.path} reading level ${level}${lv.stale ? " (written for an older revision)" : ""} -->\n${lv.markdown}`);
+      }
       const rev = format === "source" ? pagesSvc.headRevisionId(p) : p.publishedRevisionId;
       if (!rev) return fail(format === "markdown" ? "This page isn't published yet. Read it with format \"source\"." : "This page has no content.");
       const body = await pagesSvc.readRevision(deps, rev, format === "source" ? "source" : "markdown");
@@ -125,7 +135,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
   server.registerTool(
     "get_authoring_guide",
     { title: "Authoring guide", description: "The Elemnt source syntax: Markdown plus directives such as :::callout, :::tabs and :::steps, with an example of each. Read it before writing pages.", annotations: { readOnlyHint: true } },
-    tool(async () => text(deps.elemnt.authoringGuide())),
+    tool(async () => text(deps.elemnt.authoringGuide() + libraryGuide(await listComponents(deps.db, ctx.workspaceId)))),
   );
 
   server.registerTool(
