@@ -16,6 +16,8 @@ const schema = z.object({
   ELEMNT_SANDBOX_URL: z.string().url().optional(),
   /** Lets workspace admins mark their own workspace verified (self-hosting). SaaS operators set false. */
   ELEMNT_WIDGET_SELF_VERIFY: z.enum(["true", "false"]).default("true"),
+  /** Page styles load their fonts from Google Fonts; "off" keeps every font local (system font stacks). */
+  ELEMNT_FONTS: z.enum(["google", "off"]).default("google"),
   ELEMNT_WORKSPACE: z.string().default("default"),
   PORT: z.coerce.number().int().default(8787),
   /** Optional server-wide Anthropic key; a workspace's own key (Settings) takes precedence. */
@@ -40,6 +42,8 @@ export interface Config {
   /** Origin for sandboxed frames; see ELEMNT_SANDBOX_URL. */
   sandboxUrl?: string;
   widgetSelfVerify?: boolean;
+  /** Load page-style fonts from Google Fonts. Default true. */
+  fonts?: boolean;
   anthropicApiKey?: string;
   github?: GitHubConfig;
   linkedin?: { clientId: string; clientSecret: string; apiVersion: string };
@@ -70,6 +74,7 @@ export function configFromEnv(env: Env): Config {
     publicUrl,
     ...(sandboxUrl ? { sandboxUrl } : {}),
     widgetSelfVerify: env.ELEMNT_WIDGET_SELF_VERIFY === "true",
+    fonts: env.ELEMNT_FONTS === "google",
     workspaceSlug: env.ELEMNT_WORKSPACE,
     secretKey: env.ELEMNT_SECRET_KEY,
     github: {

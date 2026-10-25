@@ -1,7 +1,8 @@
-import type { WidgetCode } from "@elemnt/core";
+import type { PageStyle, WidgetCode } from "@elemnt/core";
 import { enhance } from "@elemnt/elements";
-import { forwardRef, useEffect, useRef } from "react";
-import { api, getMe, type WidgetFinding } from "./api";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
+import { api, getMe, type Me, type WidgetFinding } from "./api";
+import { previewLook } from "./look";
 
 interface Props {
   html: string;
@@ -9,6 +10,8 @@ interface Props {
   onSelectText?(text: string): void;
   /** Scan results for the page's widgets, shown next to the compile diagnostics. */
   onWidgetFindings?(findings: WidgetFinding[]): void;
+  /** The page's own style; the workspace theme fills in the rest. */
+  pageStyle?: PageStyle;
 }
 
 const registered = new Set<string>();
@@ -19,8 +22,15 @@ const key = (w: WidgetCode) => JSON.stringify([w.html, w.css, w.js]);
  * @elemnt/elements, the same runtime readers get. Widgets are registered with
  * the server first so the sandbox origin can serve them.
  */
-export const Preview = forwardRef<HTMLDivElement, Props>(function Preview({ html, widgets = [], onSelectText, onWidgetFindings }, ref) {
+let previews = 0;
+
+export const Preview = forwardRef<HTMLDivElement, Props>(function Preview({ html, widgets = [], onSelectText, onWidgetFindings, pageStyle }, ref) {
   const inner = useRef<HTMLDivElement>(null);
+  const [me, setMe] = useState<Me>();
+  useEffect(() => void getMe().then(setMe).catch(() => {}), []);
+  const [scopeId] = useState(() => `elemnt-preview-${++previews}`);
+  const styleKey = JSON.stringify(pageStyle ?? null);
+  const look = useMemo(() => previewLook(me?.theme, pageStyle, `#${scopeId}`, me?.fonts ?? true), [me, styleKey, scopeId]);
   const findingsCb = useRef(onWidgetFindings);
   findingsCb.current = onWidgetFindings;
 
@@ -57,7 +67,8 @@ export const Preview = forwardRef<HTMLDivElement, Props>(function Preview({ html
   }, [html]);
 
   return (
-    <div className="preview" ref={ref}>
+    <div id={scopeId} className={`preview ${look.classes.join(" ")}`} ref={ref} {...(look.mode !== "auto" ? { "data-theme": look.mode } : {})}>
+      <style>{look.css}</style>
       <article
         className="elemnt-page"
         ref={inner}

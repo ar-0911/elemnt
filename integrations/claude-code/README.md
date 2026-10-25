@@ -25,6 +25,8 @@ claude mcp add --transport http elemnt https://YOUR-ELEMNT-HOST/mcp --header "Au
 | `list_spaces`, `list_pages` | Browse what exists |
 | `search` | Full-text search over published pages |
 | `get_page` | A page as Markdown (published) or source (including drafts) |
+| `get_style_guide` | The organization theme (and whether it's locked), the user's saved style, the style presets and the layout components, plus how to write pages that pull readers in |
+| `save_my_style` | Remember the style the user picked, so Claude doesn't ask again |
 | `get_authoring_guide` | The source syntax with an example per component |
 | `validate` | Check source without saving |
 | `create_draft` | New page as an unpublished draft (editors) |
@@ -36,6 +38,10 @@ claude mcp add --transport http elemnt https://YOUR-ELEMNT-HOST/mcp --header "Au
 `search` also takes a GitHub repo URL and returns that repo's explainer page first, so Claude Code working in a repo can find its docs without any files in the repo.
 
 Viewers only get the read tools and comments.
+
+## The elemnt-docs-style skill
+
+Copy `skills/elemnt-docs-style` into `.claude/skills/` alongside the others. Before Claude writes or restyles a page it calls `get_style_guide`: if your organization has a locked theme it follows it without asking; otherwise it asks what style and fonts you'd like (or uses the style you saved), then writes an "extravagant but understandable" page: a hero, big numbers, inline SVG graphics, cards and timelines, in that style. The MCP server's instructions and the `generate_docs` prompt point Claude at the style guide too, so connectors without the skill file get the same behaviour.
 
 ## The generate-docs skill
 

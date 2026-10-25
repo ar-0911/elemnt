@@ -1,3 +1,4 @@
+import type { OrgTheme, PageStyle } from "@elemnt/core";
 import type { Diagnostic } from "@elemnt/core";
 
 export class ApiError extends Error {
@@ -44,11 +45,18 @@ export interface Me {
   linkedin: { connected: boolean; name?: string };
   /** Origin that runs widgets and runnable code; null when the server has none. */
   sandboxUrl: string | null;
+  /** The workspace theme, and this person's saved style. */
+  theme: OrgTheme | null;
+  style: PageStyle | null;
+  /** Whether page styles may load Google Fonts. */
+  fonts: boolean;
 }
 
 let me: Promise<Me> | undefined;
 /** /api/me, fetched once per session. */
 export const getMe = () => (me ??= api.get<Me>("/api/me"));
+/** Drops the cached /api/me after the theme or style changes. */
+export const refreshMe = () => ((me = undefined), getMe());
 
 export interface WidgetFinding {
   severity: "error" | "warning";

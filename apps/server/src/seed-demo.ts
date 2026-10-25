@@ -20,7 +20,7 @@ if (!owner) throw new Error("Run bootstrap first.");
 const space = (await findSpace(db, ws.id, "demo")) ?? (await createSpace(db, ws.id, { slug: "demo", name: "Elemnt demo", visibility: "public" }));
 const deps = { db, blobs: new FsBlobStore(env.ELEMNT_BLOB_DIR), elemnt: createElemnt() };
 
-for (const name of ["deploying", "rotate-key"]) {
+for (const name of ["tour", "deploying", "rotate-key", "postmortem", "cli"]) {
   if (await findPage(db, space.id, name)) continue;
   const source = await readFile(fileURLToPath(new URL(`../demo/${name}.md`, import.meta.url)), "utf8");
   await createPage(deps, { spaceId: space.id, path: name, source, authorId: owner.userId, message: "Demo page" });

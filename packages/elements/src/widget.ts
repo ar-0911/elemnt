@@ -37,6 +37,20 @@ interface Live {
   strikes: number;
 }
 
+/** Tokens a widget gets from the page style, so it can match the page. */
+const TOKENS = ["--bg", "--fg", "--muted", "--line", "--surface", "--accent", "--accent-2", "--soft", "--code", "--font-head", "--font-body", "--font-mono", "--radius"];
+
+function themeMessage(el: HTMLElement, dark: boolean) {
+  const cs = getComputedStyle(el);
+  const vars: Record<string, string> = {};
+  for (const t of TOKENS) {
+    const v = cs.getPropertyValue(t).trim();
+    if (v) vars[t] = v;
+  }
+  const fonts = document.querySelector<HTMLLinkElement>("link[data-elemnt-fonts]")?.href;
+  return { elemnt: 1, type: "theme", dark, vars, ...(fonts ? { fonts } : {}) };
+}
+
 export function enhanceWidgets(root: ParentNode, opts: WidgetOptions): void {
   for (const el of root.querySelectorAll<HTMLElement>("elemnt-widget")) {
     if (!claim(el)) continue;
@@ -77,7 +91,8 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
 
   let live: Live | undefined;
   let stopped = false;
-  let wanted = Boolean(opts.autorun);
+  // Static widgets (HTML and CSS, no script) have nothing to run, so they load without a click.
+  let wanted = Boolean(opts.autorun) || el.dataset.static !== undefined;
   let visible = false;
   let offscreenTimer: number | undefined;
 
@@ -129,7 +144,7 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
     const m = e.data as { elemnt?: number; type?: string; height?: number; url?: string; text?: string };
     if (!m || m.elemnt !== 1) return;
     live.lastBeat = Date.now();
-    if (m.type === "ready") live.frame.contentWindow?.postMessage({ elemnt: 1, type: "theme", dark: isDark() }, "*");
+    if (m.type === "ready") live.frame.contentWindow?.postMessage(themeMessage(el, isDark()), "*");
     if (m.type === "resize" && typeof m.height === "number") live.frame.style.height = `${Math.min(2000, Math.max(40, Math.round(m.height)))}px`;
     if (m.type === "open" && typeof m.url === "string") {
       let url: URL | undefined;
@@ -166,7 +181,7 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
 
   const onVisibility = () => (document.hidden ? (unload(), showStatic()) : start());
   document.addEventListener("visibilitychange", onVisibility);
-  const offTheme = onThemeChange((dark) => live?.frame.contentWindow?.postMessage({ elemnt: 1, type: "theme", dark }, "*"));
+  const offTheme = onThemeChange((dark) => live?.frame.contentWindow?.postMessage(themeMessage(el, dark), "*"));
 
   function cleanup() {
     clearInterval(watchdog);
