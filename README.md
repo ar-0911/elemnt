@@ -192,4 +192,4 @@ For hot reload:
 
 ## Status
 
-Elemnt is early. Today it runs as a single Node server with Postgres, packaged for Docker. Cloudflare and AWS deployment targets come next. Expect breaking changes before 1.0.
+Elemnt is early. It runs as a single Node server with Postgres, packaged for Docker, with deploy targets for [Cloudflare Containers + R2](deploy/cloudflare/README.md) and [AWS App Runner + RDS + S3](deploy/aws/README.md). Both targets are new and not yet proven in production. Expect breaking changes before 1.0.

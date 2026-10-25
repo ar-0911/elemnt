@@ -21,6 +21,7 @@
     "@elemnt/elements": "workspace:*",
     "@hono/node-server": "2.1.5",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "aws4fetch": "1.0.20",
     "diff": "^8.0.4",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.14",

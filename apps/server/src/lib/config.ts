@@ -5,6 +5,18 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   ELEMNT_PUBLIC_URL: z.string().url().default("http://localhost:8787"),
   ELEMNT_BLOB_DIR: z.string().default("./data/blobs"),
+  /**
+   * Store revision bodies in an S3-compatible bucket (Amazon S3, Cloudflare R2,
+   * MinIO) instead of ELEMNT_BLOB_DIR. Needed wherever the disk isn't durable.
+   */
+  ELEMNT_S3_BUCKET: z.string().optional(),
+  /** R2: https://ACCOUNT_ID.r2.cloudflarestorage.com. Leave unset for AWS S3. */
+  ELEMNT_S3_ENDPOINT: z.string().url().optional(),
+  /** "auto" for R2. */
+  ELEMNT_S3_REGION: z.string().default("us-east-1"),
+  /** Static keys (R2, MinIO). On AWS, leave unset and give the container a role. */
+  ELEMNT_S3_ACCESS_KEY_ID: z.string().optional(),
+  ELEMNT_S3_SECRET_ACCESS_KEY: z.string().optional(),
   /** The built editor, served at /app. */
   ELEMNT_WEB_DIR: z.string().default("../web/dist"),
   ELEMNT_SECRET_KEY: z.string().min(1, "generate one with: openssl rand -base64 32"),
@@ -19,6 +31,12 @@ const schema = z.object({
   /** Page styles load their fonts from Google Fonts; "off" keeps every font local (system font stacks). */
   ELEMNT_FONTS: z.enum(["google", "off"]).default("google"),
   ELEMNT_WORKSPACE: z.string().default("default"),
+  /**
+   * For hosts where you can't run the bootstrap script (App Runner, Cloudflare
+   * Containers): on the first start, when the workspace doesn't exist yet,
+   * the server creates it with this owner and prints their API token once.
+   */
+  ELEMNT_OWNER_EMAIL: z.string().email().optional(),
   PORT: z.coerce.number().int().default(8787),
   /** Optional server-wide Anthropic key; a workspace's own key (Settings) takes precedence. */
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -88,4 +106,19 @@ export function configFromEnv(env: Env): Config {
       ? { linkedin: { clientId: env.LINKEDIN_CLIENT_ID, clientSecret: env.LINKEDIN_CLIENT_SECRET, apiVersion: env.LINKEDIN_API_VERSION } }
       : {}),
   };
+}
+
+/** The blob store the environment asks for: an S3-compatible bucket, or the local disk. */
+export async function blobStoreFromEnv(env: Env) {
+  if (env.ELEMNT_S3_BUCKET) {
+    const { S3BlobStore } = await import("./s3.js");
+    return new S3BlobStore({
+      bucket: env.ELEMNT_S3_BUCKET,
+      region: env.ELEMNT_S3_REGION,
+      ...(env.ELEMNT_S3_ENDPOINT ? { endpoint: env.ELEMNT_S3_ENDPOINT } : {}),
+      ...(env.ELEMNT_S3_ACCESS_KEY_ID && env.ELEMNT_S3_SECRET_ACCESS_KEY ? { accessKeyId: env.ELEMNT_S3_ACCESS_KEY_ID, secretAccessKey: env.ELEMNT_S3_SECRET_ACCESS_KEY } : {}),
+    });
+  }
+  const { FsBlobStore } = await import("./blobs.js");
+  return new FsBlobStore(env.ELEMNT_BLOB_DIR);
 }

@@ -34,7 +34,7 @@ import { widgetHash, sha256Hex } from "@elemnt/core";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { workspaces } from "./db/schema.js";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
 import { getWorkspace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 
@@ -155,6 +155,16 @@ export function createApp(deps: AppDeps) {
     c.header("X-Content-Type-Options", "nosniff");
     return c.body(body);
   }
+
+  /** For load balancers and App Runner: 200 when the server can reach its database. */
+  app.get("/healthz", async (c) => {
+    try {
+      await deps.db.execute(sql`select 1`);
+      return c.text("ok");
+    } catch {
+      return c.text("database unreachable", 503);
+    }
+  });
 
   // ---------- sign-in ----------
 

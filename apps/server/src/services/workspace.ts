@@ -32,6 +32,12 @@ export async function bootstrap(db: Db, input: { workspaceSlug: string; workspac
   });
 }
 
+/** Bootstraps only when the workspace doesn't exist yet; otherwise does nothing and returns undefined. */
+export async function firstRun(db: Db, input: { workspaceSlug: string; email: string }) {
+  const [ws] = await db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, input.workspaceSlug));
+  return ws ? undefined : bootstrap(db, input);
+}
+
 export async function issueToken(db: Db, userId: string, name: string): Promise<string> {
   const token = randomToken("elm");
   await db.insert(apiTokens).values({ id: newId("tok"), userId, tokenHash: sha256(token), name });

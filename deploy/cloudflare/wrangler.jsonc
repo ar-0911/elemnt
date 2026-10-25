@@ -1,0 +1,46 @@
+// Elemnt on Cloudflare: a Worker in front of one Container running the
+// Elemnt server image. Blobs go to R2 (through its S3 API), the database is
+// any Postgres you can reach over TLS (Neon, Supabase, RDS...).
+//
+// Replace the two hostnames under "routes" with yours. They must be on
+// different registrable domains (see README.md).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "elemnt",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "routes": [
+    { "pattern": "docs.example.com", "custom_domain": true },
+    { "pattern": "example-usercontent.net", "custom_domain": true }
+  ],
+  "vars": {
+    "ELEMNT_PUBLIC_URL": "https://docs.example.com",
+    "ELEMNT_SANDBOX_URL": "https://example-usercontent.net",
+    "ELEMNT_WORKSPACE": "default",
+    // On the first start the server creates the workspace with this owner and
+    // prints their API token in the logs (`npx wrangler tail`).
+    "ELEMNT_OWNER_EMAIL": "you@example.com",
+    "ELEMNT_WIDGET_SELF_VERIFY": "true",
+    "ELEMNT_FONTS": "google",
+    "ELEMNT_S3_BUCKET": "elemnt-blobs",
+    "ELEMNT_S3_REGION": "auto"
+    // ELEMNT_S3_ENDPOINT is your account's R2 endpoint; set it here or as a secret:
+    // "ELEMNT_S3_ENDPOINT": "https://<account-id>.r2.cloudflarestorage.com"
+  },
+  "containers": [
+    {
+      "class_name": "Elemnt",
+      // Built from the repo root with the same Dockerfile as docker compose.
+      "image": "../../apps/server/Dockerfile",
+      "image_build_context": "../..",
+      "instance_type": "standard-1",
+      // One instance: the server keeps rate limits and caches in memory.
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ELEMNT", "class_name": "Elemnt" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Elemnt"] }]
+}

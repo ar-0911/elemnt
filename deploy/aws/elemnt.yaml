@@ -1,0 +1,297 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Elemnt on AWS: App Runner runs the server image from ECR, RDS Postgres holds
+  the data, S3 holds page sources and rendered HTML. Everything private sits in
+  its own VPC; App Runner reaches RDS through a VPC connector and the internet
+  (Anthropic, GitHub, LinkedIn) through one NAT gateway.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: The Elemnt server image in ECR, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/elemnt:latest
+  PublicUrl:
+    Type: String
+    Description: Where readers and editors open Elemnt, e.g. https://docs.example.com
+    AllowedPattern: "^https://[^/]+$"
+  SandboxUrl:
+    Type: String
+    Description: >-
+      The second origin for widgets and runnable code, on a different registrable
+      domain from PublicUrl, e.g. https://example-usercontent.net. Leave empty to
+      turn widgets and runnable code off.
+    Default: ""
+  OwnerEmail:
+    Type: String
+    Description: >-
+      The first owner. On the first start the server creates the workspace for
+      them and prints their API token once in the App Runner application logs.
+  Workspace:
+    Type: String
+    Default: default
+  WidgetSelfVerify:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "true"
+    Description: Set to false if you run Elemnt for people you don't trust (SaaS).
+  DbUser:
+    Type: String
+    Default: elemnt
+    AllowedPattern: "^[a-z][a-z0-9_]{0,30}$"
+    Description: Postgres user the server connects as. Its password is generated into Secrets Manager.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+  Cpu:
+    Type: String
+    Default: 1 vCPU
+    AllowedValues: [0.25 vCPU, 0.5 vCPU, 1 vCPU, 2 vCPU, 4 vCPU]
+  Memory:
+    Type: String
+    Default: 2 GB
+    AllowedValues: [0.5 GB, 1 GB, 2 GB, 3 GB, 4 GB, 6 GB, 8 GB, 10 GB, 12 GB]
+
+Conditions:
+  HasSandbox: !Not [!Equals [!Ref SandboxUrl, ""]]
+
+Resources:
+  # ---------- network ----------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.40.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}" }]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: { VpcId: !Ref Vpc, InternetGatewayId: !Ref InternetGateway }
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-public" }]
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-private-a" }]
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags: [{ Key: Name, Value: !Sub "${AWS::StackName}-private-b" }]
+  PublicRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties: { RouteTableId: !Ref PublicRoutes, DestinationCidrBlock: 0.0.0.0/0, GatewayId: !Ref InternetGateway }
+  PublicSubnetRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnet, RouteTableId: !Ref PublicRoutes }
+  NatIp:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties: { Domain: vpc }
+  Nat:
+    Type: AWS::EC2::NatGateway
+    Properties: { AllocationId: !GetAtt NatIp.AllocationId, SubnetId: !Ref PublicSubnet }
+  PrivateRoutes:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref Vpc }
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties: { RouteTableId: !Ref PrivateRoutes, DestinationCidrBlock: 0.0.0.0/0, NatGatewayId: !Ref Nat }
+  PrivateSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnetA, RouteTableId: !Ref PrivateRoutes }
+  PrivateSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnetB, RouteTableId: !Ref PrivateRoutes }
+  # S3 traffic stays inside AWS instead of going through the NAT.
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub "com.amazonaws.${AWS::Region}.s3"
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PrivateRoutes]
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Elemnt App Runner connector
+      VpcId: !Ref Vpc
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Elemnt Postgres, reachable only from the app
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AppSecurityGroup }
+
+  # ---------- secrets ----------
+  DbPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Elemnt Postgres master password
+      GenerateSecretString: { PasswordLength: 40, ExcludePunctuation: true }
+  SecretKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: >-
+        ELEMNT_SECRET_KEY. 43 letters and digits decode as 32 bytes of base64,
+        which is what the server wants. Changing it makes stored API keys and
+        LinkedIn tokens unreadable.
+      GenerateSecretString: { PasswordLength: 43, ExcludePunctuation: true }
+
+  # ---------- data ----------
+  DbSubnets:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Elemnt private subnets
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+  Db:
+    Type: AWS::RDS::DBInstance
+    # A major version alone lets RDS pick its current default minor version.
+    Metadata: { cfn-lint: { config: { ignore_checks: [W3691] } } }
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: "17"
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: elemnt
+      MasterUsername: !Ref DbUser
+      # Resolved by CloudFormation from the generated secret above; never in the template.
+      MasterUserPassword: !Join ["", ["{{resolve:secretsmanager:", !Ref DbPassword, "}}"]]
+      DBSubnetGroupName: !Ref DbSubnets
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      DeletionProtection: true
+      AutoMinorVersionUpgrade: true
+
+  Blobs:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: [{ ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 } }]
+      VersioningConfiguration: { Status: Enabled }
+
+  # ---------- app ----------
+  EcrAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Principal: { Service: build.apprunner.amazonaws.com }, Action: sts:AssumeRole }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess]
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Principal: { Service: tasks.apprunner.amazonaws.com }, Action: sts:AssumeRole }]
+      Policies:
+        - PolicyName: elemnt
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "${Blobs.Arn}/blobs/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt Blobs.Arn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: [!Ref DbPassword, !Ref SecretKey]
+
+  Connector:
+    Type: AWS::AppRunner::VpcConnector
+    Properties:
+      Subnets: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroups: [!Ref AppSecurityGroup]
+
+  Service:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: !Ref AWS::StackName
+      SourceConfiguration:
+        AuthenticationConfiguration: { AccessRoleArn: !GetAtt EcrAccessRole.Arn }
+        AutoDeploymentsEnabled: true
+        ImageRepository:
+          ImageRepositoryType: ECR
+          ImageIdentifier: !Ref ImageUri
+          ImageConfiguration:
+            Port: "8787"
+            RuntimeEnvironmentVariables:
+              # postgres.js takes the password from PGPASSWORD when the URL has none.
+              - { Name: DATABASE_URL, Value: !Sub "postgres://${DbUser}@${Db.Endpoint.Address}:${Db.Endpoint.Port}/elemnt?sslmode=require" }
+              - { Name: ELEMNT_PUBLIC_URL, Value: !Ref PublicUrl }
+              - !If [HasSandbox, { Name: ELEMNT_SANDBOX_URL, Value: !Ref SandboxUrl }, !Ref AWS::NoValue]
+              - { Name: ELEMNT_WORKSPACE, Value: !Ref Workspace }
+              - { Name: ELEMNT_OWNER_EMAIL, Value: !Ref OwnerEmail }
+              - { Name: ELEMNT_WIDGET_SELF_VERIFY, Value: !Ref WidgetSelfVerify }
+              - { Name: ELEMNT_S3_BUCKET, Value: !Ref Blobs }
+              - { Name: ELEMNT_S3_REGION, Value: !Ref AWS::Region }
+            RuntimeEnvironmentSecrets:
+              - { Name: PGPASSWORD, Value: !Ref DbPassword }
+              - { Name: ELEMNT_SECRET_KEY, Value: !Ref SecretKey }
+      InstanceConfiguration:
+        Cpu: !Ref Cpu
+        Memory: !Ref Memory
+        InstanceRoleArn: !GetAtt InstanceRole.Arn
+      NetworkConfiguration:
+        EgressConfiguration: { EgressType: VPC, VpcConnectorArn: !GetAtt Connector.VpcConnectorArn }
+      HealthCheckConfiguration:
+        Protocol: HTTP
+        Path: /healthz
+        Interval: 10
+        Timeout: 5
+        HealthyThreshold: 1
+        UnhealthyThreshold: 5
+      # One instance: the server keeps rate limits and caches in memory.
+      AutoScalingConfigurationArn: !GetAtt Scaling.AutoScalingConfigurationArn
+  Scaling:
+    Type: AWS::AppRunner::AutoScalingConfiguration
+    Properties:
+      AutoScalingConfigurationName: !Sub "${AWS::StackName}-one"
+      MinSize: 1
+      MaxSize: 1
+      MaxConcurrency: 200
+
+Outputs:
+  ServiceUrl:
+    Description: App Runner's own URL. Point your PublicUrl (and SandboxUrl) hostnames at this service with custom domains.
+    Value: !Sub "https://${Service.ServiceUrl}"
+  ServiceArn:
+    Value: !GetAtt Service.ServiceArn
+  BlobBucket:
+    Value: !Ref Blobs
+  DatabaseEndpoint:
+    Value: !GetAtt Db.Endpoint.Address
