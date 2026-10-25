@@ -42,6 +42,17 @@ export interface Me {
   email: string;
   role: "owner" | "admin" | "editor" | "viewer" | undefined;
   linkedin: { connected: boolean; name?: string };
+  /** Origin that runs widgets and runnable code; null when the server has none. */
+  sandboxUrl: string | null;
+}
+
+let me: Promise<Me> | undefined;
+/** /api/me, fetched once per session. */
+export const getMe = () => (me ??= api.get<Me>("/api/me"));
+
+export interface WidgetFinding {
+  severity: "error" | "warning";
+  message: string;
 }
 
 export interface Space {

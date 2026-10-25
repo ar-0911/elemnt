@@ -42,10 +42,20 @@ export const elemntSanitizeSchema: Schema = {
     "elemnt-runbook",
     "elemnt-query",
     "elemnt-run",
+    "elemnt-chart",
+    "elemnt-datagrid",
+    "elemnt-explore",
+    "elemnt-var",
+    "elemnt-calc",
+    "elemnt-annotate",
+    "elemnt-quiz",
+    "elemnt-widget",
+    "dfn",
   ],
   attributes: {
     ...withElemntClasses(defaultSchema.attributes ?? {}),
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "role", "data*"],
+    dfn: ["title", "tabIndex"],
   },
 };
 

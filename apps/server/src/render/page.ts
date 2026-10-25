@@ -1,8 +1,8 @@
 import { contentCss, themeTokensCss } from "@elemnt/core";
 /**
- * The reader shell around a stored rendition. Server-rendered, readable with
- * JavaScript off; one small nonce'd script adds tabs, the copy button and
- * Mermaid. The interactive Web Components package replaces it in M3.
+ * The reader shell around a stored rendition. Server-rendered and readable
+ * with JavaScript off; @elemnt/elements (served at /assets/elements.js) then
+ * hydrates tabs, charts, sliders, quizzes, diagrams, widgets and runnable code.
  */
 
 export function escapeHtml(s: string): string {
@@ -23,14 +23,18 @@ export interface ShellInput {
   share?: { dialogUrl: string; canPost: boolean; pageId: string };
   /** Present for members who can edit. */
   editUrl?: string;
+  /** Where widgets run; widgets stay static without it. */
+  sandboxUrl?: string;
+  /** Run widgets without a click (members, or verified workspaces). */
+  autorun?: boolean;
 }
 
-const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
-
-export function contentSecurityPolicy(nonce: string): string {
+export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): string {
   return [
     "default-src 'self'",
-    `script-src 'nonce-${nonce}' https://cdn.jsdelivr.net`,
+    // 'self' for /assets/elements.js; jsDelivr for Mermaid, loaded only on pages with diagrams.
+    `script-src 'nonce-${nonce}' 'self' https://cdn.jsdelivr.net`,
+    `frame-src ${sandboxUrl ? new URL(sandboxUrl).origin : "'none'"}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "connect-src 'self'",
@@ -58,18 +62,19 @@ ${contentCss}
 `;
 
 const SCRIPT = `
-for (const root of document.querySelectorAll(".elemnt-tabs")) {
-  const panels = [...root.querySelectorAll(":scope > .elemnt-tab")];
-  if (panels.length < 2) continue;
-  const list = document.createElement("div"); list.className = "tablist"; list.setAttribute("role", "tablist");
-  panels.forEach((p, i) => {
-    p.querySelector(".elemnt-tab-label")?.setAttribute("hidden", "");
-    const b = document.createElement("button"); b.type = "button"; b.role = "tab"; b.textContent = p.dataset.label || "Tab " + (i + 1);
-    b.onclick = () => { panels.forEach((q, j) => { q.hidden = j !== i; list.children[j].setAttribute("aria-selected", String(j === i)); }); };
-    list.append(b);
-  });
-  root.prepend(list); list.children[0].click();
-}
+import { enhance } from "/assets/elements.js";
+const cfg = JSON.parse(document.getElementById("elemnt-config").textContent);
+const article = document.querySelector("article.elemnt-page");
+if (article) enhance(article, {
+  sandboxOrigin: cfg.sandboxUrl ?? undefined,
+  widgets: {
+    autorun: cfg.autorun,
+    report: async (hash, reason) => {
+      const res = await fetch("/api/widgets/" + hash + "/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, page: location.pathname }) });
+      if (!res.ok) throw new Error("report failed");
+    },
+  },
+});
 const copy = document.getElementById("copy-md");
 copy?.addEventListener("click", async () => {
   const text = document.getElementById("md-body")?.textContent ?? "";
@@ -85,11 +90,6 @@ document.getElementById("li-form")?.addEventListener("submit", async (e) => {
   const data = await res.json().catch(() => ({}));
   status.innerHTML = res.ok ? (data.postUrl ? 'Posted. <a href="' + data.postUrl + '" target="_blank" rel="noopener">View on LinkedIn</a>' : "Posted.") : (data.error || "Posting failed.");
 });
-if (document.querySelector("pre.mermaid")) {
-  const { default: mermaid } = await import("${MERMAID}");
-  mermaid.initialize({ startOnLoad: false, theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });
-  await mermaid.run({ querySelector: "pre.mermaid" });
-}
 `;
 
 export function renderShell(p: ShellInput): string {
@@ -133,8 +133,14 @@ ${d ? `<meta property="og:description" content="${d}">` : ""}
 </header>
 <main>${content}</main>
 ${dialog}
+<script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: p.sandboxUrl ?? null, autorun: Boolean(p.autorun) })}</script>
 <script type="module" nonce="${p.nonce}">${SCRIPT}</script>
 </body></html>`;
+}
+
+/** JSON that can't end the script element it sits in. */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 export function renderSimple(nonce: string, title: string, bodyHtml: string): string {

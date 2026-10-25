@@ -1,0 +1,25 @@
+{
+  "name": "@elemnt/elements",
+  "version": "0.1.0",
+  "description": "Browser runtime for rendered Elemnt pages: tabs, charts, sliders, quizzes, the widget sandbox host and runnable code.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bundle": "./dist/elements.js"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@elemnt/core": "workspace:*"
+  },
+  "devDependencies": {
+    "happy-dom": "^21.0.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

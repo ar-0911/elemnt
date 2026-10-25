@@ -119,6 +119,25 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
     }),
   );
 
+  server.registerTool(
+    "get_runbook",
+    {
+      title: "Get a runbook",
+      description:
+        "Reads the runbooks on a page as structured steps (title, commands, expected output, approval gate) so you can run them in order. Before any step with gate \"approve\", stop and ask the user. If output doesn't match expect, stop and report it.",
+      inputSchema: { space: z.string(), path: z.string(), id: z.string().optional().describe("Runbook id; omit to list every runbook on the page") },
+      annotations: { readOnlyHint: true },
+    },
+    tool(async ({ space: slug, path, id }: { space: string; path: string; id?: string }) => {
+      const { page: p } = await page(slug, path);
+      if (!p.publishedRevisionId) return fail("This page isn't published yet; runbooks run from published pages only.");
+      const books = deps.elemnt.runbooks(await pagesSvc.readRevision(deps, p.publishedRevisionId, "source"));
+      if (!id) return text(books.length ? books : "This page has no runbooks.");
+      const book = books.find((b) => b.id === id);
+      return book ? text(book) : fail(`No runbook "${id}" here. Runbooks on this page: ${books.map((b) => b.id).join(", ") || "none"}.`);
+    }),
+  );
+
   if (canEdit) {
     server.registerTool(
       "create_draft",

@@ -65,6 +65,15 @@ describe("MCP server", () => {
     expect((await callTool(t.ownerToken, "get_page", { space: "docs", path: "missing" })).isError).toBe(true);
   });
 
+  it("hands runbooks to agents as structured steps", async () => {
+    const source = '---\ntitle: Rotate\n---\n::::runbook{id=rotate}\n:::step[Create key]\n```sh\nacme keys create\n```\n:::\n:::step[Revoke old]{gate=approve expect="revoked"}\n```sh\nacme keys revoke old\n```\n:::\n::::\n';
+    await t.call("/api/spaces/docs/pages", { method: "POST", token: t.ownerToken, json: { path: "rotate", source } });
+    const book = JSON.parse((await callTool(t.ownerToken, "get_runbook", { space: "docs", path: "rotate", id: "rotate" })).text);
+    expect(book.steps.map((s: { title: string; gate: string }) => [s.title, s.gate])).toEqual([["Create key", "none"], ["Revoke old", "approve"]]);
+    expect(book.steps[1].commands).toEqual([{ lang: "sh", code: "acme keys revoke old" }]);
+    expect((await callTool(t.ownerToken, "get_runbook", { space: "docs", path: "rotate", id: "nope" })).text).toContain("Runbooks on this page: rotate");
+  });
+
   it("writes only drafts and suggestions", async () => {
     const draft = JSON.parse((await callTool(t.ownerToken, "create_draft", { space: "docs", path: "new-guide", source: "---\ntitle: New\n---\nHello." })).text);
     expect(draft.review).toBe("https://docs.example.com/app/docs/new-guide");
