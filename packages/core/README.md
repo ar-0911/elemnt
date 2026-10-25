@@ -25,7 +25,7 @@ Raw HTML in source is dropped, and the HTML output is sanitized against `elemntS
 
 ## Components
 
-Built in: `callout`, `tabs` / `tab`, `steps`, `details`, `diagram`. Each implements `ElemntComponent`:
+Built in: `callout`, `tabs` / `tab`, `steps`, `details`, `diagram`, `runbook` / `step`, `query`. Each implements `ElemntComponent`:
 
 ```ts
 interface ElemntComponent<P> {
@@ -40,5 +40,14 @@ interface ElemntComponent<P> {
 ```
 
 Add your own with `createElemnt({ components: [...builtinComponents, mine] })`.
+
+### Runbooks, runnable code, live values, slides
+
+- `::::runbook{id=…}` with `:::step[Title]{gate=approve expect="regex"}` children. The agent projection spells out order, approval gates and expected output so Claude Code can execute it over MCP.
+- ```` ```js run ```` and ```` ```python run ```` fences render as `<elemnt-run>` for the in-page sandbox; agents get a plain fence.
+- `:query[fallback]{source=… key=… format=…}` (inline) or `::query` (block) renders `<elemnt-query>`, filled at view time. Agents get where the value comes from.
+- `elemnt.toSlides(doc)` splits a page at h1/h2 and `---` for present mode and carousel export.
+
+The runtimes for these (runbook execution, code sandbox, query fetching) come in later milestones; this package defines the syntax and both projections.
 
 Unknown inline directives (`10:30`, `ratio:high`) are kept as literal text. Unknown block directives produce an error diagnostic, and their content still renders.

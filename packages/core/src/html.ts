@@ -1,7 +1,10 @@
 import type { Element, Root as HastRoot } from "hast";
 import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
 import { toHtml as hastToHtml } from "hast-util-to-html";
-import { toHast, type Handler, type State } from "mdast-util-to-hast";
+import type { Code } from "mdast";
+import { defaultHandlers, toHast, type Handler, type State } from "mdast-util-to-hast";
+import { h } from "hastscript";
+import { runtimeFor, wantsRun } from "./runnable.js";
 import { elemntData, labelText, splitDirective } from "./directive.js";
 import type { AnyComponent, DirectiveNode, HtmlContext, ParsedDocument } from "./types.js";
 
@@ -11,6 +14,20 @@ import type { AnyComponent, DirectiveNode, HtmlContext, ParsedDocument } from ".
  * directive props. User JavaScript never appears here: widgets render in a
  * sandboxed iframe on a separate origin.
  */
+/**
+ * The default schema pins `className` on some tags to GitHub's values
+ * (`task-list-item` on li, `footnotes` on section). Keep those, and also
+ * allow Elemnt's own `elemnt-*` classes there.
+ */
+function withElemntClasses(attributes: NonNullable<Schema["attributes"]>): NonNullable<Schema["attributes"]> {
+  return Object.fromEntries(
+    Object.entries(attributes).map(([tag, defs]) => [
+      tag,
+      defs.map((def) => (Array.isArray(def) && def[0] === "className" ? [...def, /^elemnt-/] : def)),
+    ]),
+  ) as NonNullable<Schema["attributes"]>;
+}
+
 export const elemntSanitizeSchema: Schema = {
   ...defaultSchema,
   tagNames: [
@@ -22,10 +39,12 @@ export const elemntSanitizeSchema: Schema = {
     "elemnt-tabs",
     "elemnt-diagram",
     "elemnt-steps",
+    "elemnt-runbook",
+    "elemnt-query",
+    "elemnt-run",
   ],
   attributes: {
-    // The default schema only lets <section> carry the GFM footnotes class; Elemnt uses it for tab panels.
-    ...Object.fromEntries(Object.entries(defaultSchema.attributes ?? {}).filter(([tag]) => tag !== "section")),
+    ...withElemntClasses(defaultSchema.attributes ?? {}),
     "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "role", "data*"],
   },
 };
@@ -63,6 +82,13 @@ const directiveHandler =
   return component.render(node, data.props, context(state));
 };
 
+/** ```js run fences become a runnable block; the sandbox runtime hydrates `<elemnt-run>`. */
+const codeHandler: Handler = (state, node: Code) => {
+  const el = defaultHandlers.code(state, node);
+  const runtime = wantsRun(node) ? runtimeFor(node) : undefined;
+  return runtime ? h("elemnt-run", { dataRuntime: runtime }, [el]) : el;
+};
+
 export interface HtmlOptions {
   /** Return the tree before the sanitize pass. For debugging component output only; never serve it. */
   unsafeSkipSanitize?: boolean;
@@ -71,7 +97,7 @@ export interface HtmlOptions {
 export function toHtmlTree(doc: ParsedDocument, registry: ReadonlyMap<string, AnyComponent>, options: HtmlOptions = {}): HastRoot {
   const handler = directiveHandler(registry);
   const hast = toHast(structuredClone(doc.tree), {
-    handlers: { containerDirective: handler, leafDirective: handler, textDirective: handler },
+    handlers: { code: codeHandler, containerDirective: handler, leafDirective: handler, textDirective: handler },
   }) as HastRoot;
   return options.unsafeSkipSanitize ? hast : (sanitize(hast, elemntSanitizeSchema) as HastRoot);
 }

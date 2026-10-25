@@ -51,6 +51,8 @@ export interface MarkdownContext {
   labelText(node: DirectiveNode): string | undefined;
   /** Depth for a heading that sits one level below the surrounding section (2–6). */
   headingDepth(node: DirectiveNode): 2 | 3 | 4 | 5 | 6;
+  /** The directive this one is nested in, if any. */
+  parent(node: DirectiveNode): DirectiveNode | undefined;
 }
 
 export interface ValidationContext {
