@@ -1,0 +1,82 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixture: onboarding page > projects Markdown for agents 1`] = `
+"# Deploying the billing service
+
+> How billing goes from a merged PR to production.
+
+## Before you start
+
+> **Production access** (warning): You need the \`deployer\` role. Ask in #platform if you don't have it.
+
+Meetings start at 10:30 and the ratio:high flag stays literal.
+
+## Install
+
+### npm
+
+\`\`\`sh
+npm i -g @acme/deploy
+\`\`\`
+
+### pnpm
+
+\`\`\`sh
+pnpm add -g @acme/deploy
+\`\`\`
+
+## Ship it
+
+1. **Tag** the release with \`acme tag\`.
+2. **Watch** the canary dashboard for 10 minutes.
+3. **Promote** with \`acme promote\`.
+
+_Diagram: Release path_
+
+\`\`\`mermaid
+flowchart LR
+  PR --> Canary --> Prod
+\`\`\`
+
+**Why canaries?**
+
+A canary takes 5% of traffic, so a bad release hurts few users.
+
+| Env  | Region    |
+| ---- | --------- |
+| prod | eu-west-1 |
+"
+`;
+
+exports[`fixture: onboarding page > renders HTML for people 1`] = `
+"<h2>Before you start</h2>
+<aside class="elemnt-callout" data-type="warn" role="note"><p class="elemnt-callout-title">Production access</p><p>You need the <code>deployer</code> role. Ask in #platform if you don't have it.</p></aside>
+<p>Meetings start at 10:30 and the ratio:high flag stays literal.</p>
+<h2>Install</h2>
+<elemnt-tabs><div class="elemnt-tabs"><section class="elemnt-tab" data-label="npm"><p class="elemnt-tab-label">npm</p><pre><code class="language-sh">npm i -g @acme/deploy
+</code></pre></section><section class="elemnt-tab" data-label="pnpm"><p class="elemnt-tab-label">pnpm</p><pre><code class="language-sh">pnpm add -g @acme/deploy
+</code></pre></section></div></elemnt-tabs>
+<h2>Ship it</h2>
+<elemnt-steps><div class="elemnt-steps"><ol>
+<li><strong>Tag</strong> the release with <code>acme tag</code>.</li>
+<li><strong>Watch</strong> the canary dashboard for 10 minutes.</li>
+<li><strong>Promote</strong> with <code>acme promote</code>.</li>
+</ol></div></elemnt-steps>
+<figure class="elemnt-diagram"><elemnt-diagram data-lang="mermaid"><pre class="mermaid">flowchart LR
+  PR --> Canary --> Prod</pre></elemnt-diagram><figcaption>Release path</figcaption></figure>
+<details class="elemnt-details"><summary>Why canaries?</summary><p>A canary takes 5% of traffic, so a bad release hurts few users.</p></details>
+<table>
+<thead>
+<tr>
+<th>Env</th>
+<th>Region</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>prod</td>
+<td>eu-west-1</td>
+</tr>
+</tbody>
+</table>"
+`;

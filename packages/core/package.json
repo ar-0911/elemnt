@@ -1,0 +1,47 @@
+{
+  "name": "@elemnt/core",
+  "version": "0.1.0",
+  "description": "Elemnt source parser and compilers: one Markdown source, interactive HTML for people, plain Markdown for agents.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hast-util-sanitize": "^5.0.2",
+    "hast-util-to-html": "^9.0.5",
+    "hastscript": "^9.0.1",
+    "mdast-util-directive": "^3.1.1",
+    "mdast-util-to-hast": "13.2.1",
+    "mdast-util-to-string": "^4.0.0",
+    "remark-directive": "4.0.0",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-parse": "11.0.0",
+    "remark-stringify": "11.0.0",
+    "unified": "11.0.5",
+    "unist-util-visit": "5.2.0",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/hast": "^3.0.5",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22.20.5",
+    "@types/unist": "^3.0.3",
+    "typescript": "5.9.3",
+    "vitest": "^5.0.5"
+  }
+}
