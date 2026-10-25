@@ -1,4 +1,5 @@
-import { bigserial, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { bigserial, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -67,10 +68,42 @@ export const pages = pgTable(
     title: text("title").notNull(),
     summary: text("summary"),
     publishedRevisionId: text("published_revision_id"),
+    /** Autosaved work in progress, not yet published. Null when the draft matches the published revision. */
+    draftRevisionId: text("draft_revision_id"),
+    /** Soft lock: one editor at a time. Expires on its own if the editor goes away. */
+    lockedBy: text("locked_by"),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    /** Plain text of the published Markdown, for full-text search. */
+    searchText: text("search_text").notNull().default(""),
     createdAt: createdAt(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("pages_space_path").on(t.spaceId, t.path), index("pages_parent").on(t.parentId)],
+  (t) => [
+    uniqueIndex("pages_space_path").on(t.spaceId, t.path),
+    index("pages_parent").on(t.parentId),
+    index("pages_search").using("gin", sql`to_tsvector('english', ${t.title} || ' ' || ${t.searchText})`),
+  ],
+);
+
+/**
+ * Page-level or anchored to a quote. The anchor is a text-quote selector
+ * (exact text plus a little context) so it survives edits elsewhere on the page.
+ */
+export const comments = pgTable(
+  "comments",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    parentId: text("parent_id"),
+    revisionId: text("revision_id"),
+    anchor: jsonb("anchor").$type<{ exact: string; prefix?: string; suffix?: string } | null>(),
+    authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: text("resolved_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("comments_page").on(t.pageId, t.createdAt)],
 );
 
 /** Immutable. Bodies live in the blob store, addressed by sha256. */
@@ -83,6 +116,9 @@ export const revisions = pgTable(
     sourceHash: text("source_hash").notNull(),
     htmlHash: text("html_hash").notNull(),
     markdownHash: text("markdown_hash").notNull(),
+    /** From frontmatter at save time, so publishing a draft needs no recompile. */
+    title: text("title"),
+    summary: text("summary"),
     authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
     message: text("message"),
     createdAt: createdAt(),

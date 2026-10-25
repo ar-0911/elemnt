@@ -4,6 +4,8 @@ const schema = z.object({
   DATABASE_URL: z.string().url(),
   ELEMNT_PUBLIC_URL: z.string().url().default("http://localhost:8787"),
   ELEMNT_BLOB_DIR: z.string().default("./data/blobs"),
+  /** The built editor, served at /app. */
+  ELEMNT_WEB_DIR: z.string().default("../web/dist"),
   ELEMNT_SECRET_KEY: z.string().min(1, "generate one with: openssl rand -base64 32"),
   ELEMNT_WORKSPACE: z.string().default("default"),
   PORT: z.coerce.number().int().default(8787),

@@ -8,6 +8,7 @@ import type { AnyComponent, Diagnostic, Frontmatter, ParsedDocument } from "./ty
 export * from "./types.js";
 export * from "./components/index.js";
 export { elemntSanitizeSchema } from "./html.js";
+export { contentCss, themeTokensCss } from "./theme.js";
 export type { AgentMarkdownOptions, HtmlOptions, Slide };
 
 export interface CompileResult {
