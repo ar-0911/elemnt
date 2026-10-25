@@ -14,6 +14,10 @@ export const workspaces = pgTable("workspaces", {
   id: text("id").primaryKey(),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
+  /** The workspace's own Anthropic API key (bring your own key), AES-256-GCM sealed. */
+  aiKeyCiphertext: text("ai_key_ciphertext"),
+  /** Last four characters, so admins can tell which key is set. */
+  aiKeyHint: text("ai_key_hint"),
   createdAt: createdAt(),
 });
 
@@ -38,6 +42,10 @@ export const apiTokens = pgTable("api_tokens", {
   name: text("name").notNull(),
   createdAt: createdAt(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  /** Set for OAuth-issued tokens (MCP clients); bootstrap and personal tokens don't expire. */
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  /** The OAuth client that holds this token, if any. */
+  clientId: text("client_id"),
 });
 
 export const visibilities = ["private", "workspace", "public"] as const;
@@ -158,4 +166,50 @@ export const linkedinPosts = pgTable("linkedin_posts", {
   postUrn: text("post_urn").notNull(),
   sharedUrl: text("shared_url").notNull(),
   createdAt: createdAt(),
+});
+
+export const suggestionStatuses = ["open", "accepted", "rejected"] as const;
+
+/**
+ * A proposed change to a page, from Claude in the editor or from an agent over MCP.
+ * It stores the whole proposed source against the revision it was written for;
+ * hunks are computed on read and a person picks which ones to apply.
+ */
+export const suggestions = pgTable(
+  "suggestions",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    baseRevisionId: text("base_revision_id").notNull(),
+    proposedHash: text("proposed_hash").notNull(),
+    /** Who asked for it: "assist" (editor ⌘I), "mcp" (an agent), "drift" (repo check). */
+    origin: text("origin", { enum: ["assist", "mcp", "drift"] }).notNull(),
+    authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+    summary: text("summary").notNull(),
+    status: text("status", { enum: suggestionStatuses }).notNull().default("open"),
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** The draft revision an accept produced. */
+    appliedRevisionId: text("applied_revision_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("suggestions_page").on(t.pageId, t.status)],
+);
+
+/** OAuth 2.1 clients registered dynamically by MCP clients (RFC 7591). */
+export const oauthClients = pgTable("oauth_clients", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  createdAt: createdAt(),
+});
+
+/** Single-use authorization codes, PKCE S256 only. */
+export const oauthCodes = pgTable("oauth_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  clientId: text("client_id").notNull().references(() => oauthClients.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });

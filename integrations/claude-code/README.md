@@ -1,0 +1,38 @@
+# Elemnt for Claude Code and Claude
+
+Elemnt is an MCP server. Claude reads pages as Markdown, learns the component syntax, and writes back only as drafts and suggestions that a person reviews.
+
+## Connect
+
+**Claude Code**
+
+```sh
+claude mcp add --transport http elemnt https://YOUR-ELEMNT-HOST/mcp
+```
+
+The first time Claude Code uses it, it opens a browser to sign in to Elemnt and approve access (OAuth with PKCE; access lasts 30 days). For scripts or CI you can instead send an API token:
+
+```sh
+claude mcp add --transport http elemnt https://YOUR-ELEMNT-HOST/mcp --header "Authorization: Bearer elm_…"
+```
+
+**Claude (claude.ai and the apps)**: Settings → Connectors → Add custom connector, with the URL `https://YOUR-ELEMNT-HOST/mcp`. Elemnt must be reachable from the internet for this.
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `list_spaces`, `list_pages` | Browse what exists |
+| `search` | Full-text search over published pages |
+| `get_page` | A page as Markdown (published) or source (including drafts) |
+| `get_authoring_guide` | The source syntax with an example per component |
+| `validate` | Check source without saving |
+| `create_draft` | New page as an unpublished draft (editors) |
+| `suggest_edit` | Propose a change to a page, reviewed hunk by hunk (editors) |
+| `add_comment` | Comment on a page, optionally on a quote |
+
+Viewers only get the read tools and comments.
+
+## The generate-docs skill
+
+Copy `skills/generate-docs` into your project's `.claude/skills/` (or `~/.claude/skills/` for every project). Then "generate docs for the billing service" in Claude Code reads the code and writes Elemnt pages through the tools above. In Claude, the `generate_docs` prompt from the connector does the same from a conversation.

@@ -14,6 +14,12 @@ import * as linkedin from "./services/linkedin.js";
 import * as pagesSvc from "./services/pages.js";
 import * as commentsSvc from "./services/comments.js";
 import { searchPages } from "./services/search.js";
+import { anthropicProvider, assistPrompt, EDIT_SCHEMA, editorSystemPrompt, type AiProvider } from "./services/ai.js";
+import * as oauth from "./services/oauth.js";
+import * as suggestionsSvc from "./services/suggestions.js";
+import { handleMcp } from "./mcp.js";
+import { workspaces } from "./db/schema.js";
+import { eq } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
 import { getWorkspace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 
@@ -24,6 +30,8 @@ export interface AppDeps {
   elemnt?: Elemnt;
   /** Injected so tests can stand in for LinkedIn. */
   fetch?: typeof fetch;
+  /** Injected so tests can stand in for Claude. */
+  ai?: AiProvider;
 }
 
 type Env = { Variables: { viewer: Viewer | undefined; workspaceId: string; nonce: string } };
@@ -177,9 +185,9 @@ export function createApp(deps: AppDeps) {
     return c.json({ ...result, url: pageUrl(space, pagesSvc.normalizePath(input.path)) }, 201);
   });
 
-  async function pageWithAccess(c: Context<Env>, role: "viewer" | "editor") {
+  async function pageWithAccess(c: Context<Env>, role: "viewer" | "editor", pageId = c.req.param("id")!) {
     const viewer = requireRole(c, role);
-    const page = await pagesSvc.getPage(deps.db, c.req.param("id")!);
+    const page = await pagesSvc.getPage(deps.db, pageId);
     const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.id, page.spaceId) });
     if (!space || space.workspaceId !== c.get("workspaceId")) throw new HttpError(404, "Page not found.");
     return { viewer, page, space };
@@ -342,6 +350,189 @@ export function createApp(deps: AppDeps) {
   });
 
   // ---------- reader ----------
+
+
+  // ---------- AI: bring your own Anthropic key ----------
+
+  async function aiKey(workspaceId: string): Promise<{ key: string; source: "workspace" | "server"; hint: string } | undefined> {
+    const [ws] = await deps.db.select({ c: workspaces.aiKeyCiphertext, hint: workspaces.aiKeyHint }).from(workspaces).where(eq(workspaces.id, workspaceId));
+    if (ws?.c) return { key: box.open(ws.c), source: "workspace", hint: ws.hint ?? "" };
+    if (deps.config.anthropicApiKey) return { key: deps.config.anthropicApiKey, source: "server", hint: deps.config.anthropicApiKey.slice(-4) };
+    return undefined;
+  }
+
+  async function aiClient(c: Context<Env>) {
+    const k = await aiKey(c.get("workspaceId"));
+    if (!k) throw new HttpError(400, "Claude isn't set up for this workspace yet. An admin can add an Anthropic API key in Settings.");
+    return (deps.ai ?? anthropicProvider)(k.key);
+  }
+
+  app.get("/api/ai", async (c) => {
+    requireRole(c, "editor");
+    const k = await aiKey(c.get("workspaceId"));
+    return c.json({ configured: Boolean(k), source: k?.source ?? null, hint: k ? `…${k.hint}` : null });
+  });
+
+  app.put("/api/ai/key", async (c) => {
+    requireRole(c, "admin");
+    const { apiKey } = z.object({ apiKey: z.string().trim().min(20).max(300) }).parse(await c.req.json());
+    await deps.db.update(workspaces).set({ aiKeyCiphertext: box.seal(apiKey), aiKeyHint: apiKey.slice(-4) }).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json({ configured: true, source: "workspace", hint: `…${apiKey.slice(-4)}` });
+  });
+
+  app.delete("/api/ai/key", async (c) => {
+    requireRole(c, "admin");
+    await deps.db.update(workspaces).set({ aiKeyCiphertext: null, aiKeyHint: null }).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.body(null, 204);
+  });
+
+  /**
+   * ⌘I in the editor. Claude rewrites the selection (or the page) and the result
+   * comes back as a suggestion to review, never as a direct edit.
+   */
+  app.post("/api/pages/:id/assist", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const body = z
+      .object({
+        instruction: z.string().trim().min(1).max(2000),
+        baseRevisionId: z.string(),
+        selection: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional(),
+      })
+      .parse(await c.req.json());
+    const head = pagesSvc.headRevisionId(page);
+    if (head !== body.baseRevisionId) throw new HttpError(409, "Save your changes before asking Claude, so the suggestion lines up with them.", { currentRevisionId: head });
+    const source = await pagesSvc.readRevision(deps, head, "source");
+    const sel = body.selection && body.selection.to > body.selection.from && body.selection.to <= source.length ? body.selection : undefined;
+
+    const ai = await aiClient(c);
+    const out = await ai.json<{ replacement: string; summary: string }>({
+      system: editorSystemPrompt(elemnt.authoringGuide()),
+      prompt: assistPrompt({ source, instruction: body.instruction, ...(sel ? { selection: sel } : {}) }),
+      schema: EDIT_SCHEMA,
+    });
+    const proposed = sel ? source.slice(0, sel.from) + out.replacement + source.slice(sel.to) : out.replacement;
+    const created = await suggestionsSvc.createSuggestion(pageDeps, { pageId: page.id, baseRevisionId: head, proposed, origin: "assist", authorId: viewer.userId, summary: out.summary });
+    return c.json({ ...created, ...(await suggestionsSvc.getSuggestion(pageDeps, created.id)) }, 201);
+  });
+
+  // ---------- suggestions ----------
+
+  async function suggestionWithAccess(c: Context<Env>, role: "viewer" | "editor") {
+    const s = await deps.db.query.suggestions.findFirst({ where: (t, { eq }) => eq(t.id, c.req.param("sid")!) });
+    if (!s) throw new HttpError(404, "Suggestion not found.");
+    return { ...(await pageWithAccess(c, role, s.pageId)), suggestion: s };
+  }
+
+  app.get("/api/pages/:id/suggestions", async (c) => {
+    const { page } = await pageWithAccess(c, "viewer");
+    return c.json(await suggestionsSvc.listSuggestions(deps, page.id, c.req.query("status") === "all" ? "all" : "open"));
+  });
+
+  app.get("/api/suggestions/:sid", async (c) => {
+    const { suggestion } = await suggestionWithAccess(c, "viewer");
+    return c.json(await suggestionsSvc.getSuggestion(pageDeps, suggestion.id));
+  });
+
+  app.post("/api/suggestions/:sid/accept", async (c) => {
+    const { viewer, suggestion } = await suggestionWithAccess(c, "editor");
+    const { hunks } = z.object({ hunks: z.array(z.number().int().min(0)).optional() }).parse(await c.req.json().catch(() => ({})));
+    return c.json(await suggestionsSvc.acceptSuggestion(pageDeps, { id: suggestion.id, userId: viewer.userId, ...(hunks ? { hunks } : {}) }));
+  });
+
+  app.post("/api/suggestions/:sid/reject", async (c) => {
+    const { viewer, suggestion } = await suggestionWithAccess(c, "editor");
+    await suggestionsSvc.rejectSuggestion(deps, { id: suggestion.id, userId: viewer.userId });
+    return c.body(null, 204);
+  });
+
+  // ---------- MCP and its OAuth ----------
+
+  const oauthMeta = oauth.metadata(deps.config.publicUrl);
+  app.get("/.well-known/oauth-authorization-server", (c) => c.json(oauthMeta.authorizationServer));
+  app.get("/.well-known/oauth-protected-resource", (c) => c.json(oauthMeta.protectedResource));
+  app.get("/.well-known/oauth-protected-resource/mcp", (c) => c.json(oauthMeta.protectedResource));
+
+  function oauthFail(c: Context<Env>, err: unknown) {
+    if (err instanceof oauth.OAuthError) return c.json({ error: err.code, error_description: err.message }, 400);
+    throw err;
+  }
+
+  app.post("/oauth/register", async (c) => {
+    try {
+      return c.json(await oauth.registerClient(deps.db, await c.req.json()), 201);
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+  });
+
+  app.get("/oauth/authorize", async (c) => {
+    let checked;
+    try {
+      checked = await oauth.checkAuthorize(deps.db, c.req.query());
+    } catch (err) {
+      // Never redirect to an unverified redirect_uri; show the problem instead.
+      const msg = err instanceof oauth.OAuthError ? err.message : "Invalid request.";
+      return html(c, renderSimple(c.get("nonce"), "Can't connect · Elemnt", `<h1>Can't connect</h1><p>${escapeHtml(msg)}</p>`));
+    }
+    const viewer = c.get("viewer");
+    if (!viewer?.role) return c.redirect(`/login?next=${encodeURIComponent(c.req.url.slice(c.req.url.indexOf("/oauth/")))}`);
+    const p = checked.params;
+    const hidden = Object.entries({ client_id: p.clientId, redirect_uri: p.redirectUri, code_challenge: p.codeChallenge, code_challenge_method: "S256", response_type: "code", state: p.state ?? "" })
+      .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`)
+      .join("");
+    const canWrite = hasRole(viewer, "editor");
+    return html(
+      c,
+      renderSimple(
+        c.get("nonce"),
+        "Connect · Elemnt",
+        `<h1>Connect ${escapeHtml(checked.clientName)} to Elemnt?</h1>
+<p>It will act as <strong>${escapeHtml(viewer.email)}</strong> and can search and read this workspace's docs${canWrite ? ", create drafts, suggest edits and comment. Nothing it writes is published until a person reviews it" : " and comment"}.</p>
+<p>Access lasts 30 days. It returns to <code>${escapeHtml(new URL(p.redirectUri).origin)}</code>.</p>
+<form method="post" action="/oauth/authorize">${hidden}<p><button class="btn" type="submit" name="decision" value="allow">Allow</button> <button class="btn" type="submit" name="decision" value="deny">Cancel</button></p></form>`,
+      ),
+    );
+  });
+
+  app.post("/oauth/authorize", async (c) => {
+    const viewer = c.get("viewer");
+    if (!viewer?.role) throw new HttpError(401, "Sign in first.");
+    const form = Object.fromEntries(Object.entries(await c.req.parseBody()).map(([k, v]) => [k, typeof v === "string" ? v : undefined]));
+    let checked;
+    try {
+      checked = await oauth.checkAuthorize(deps.db, form);
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+    const back = new URL(checked.params.redirectUri);
+    if (checked.params.state) back.searchParams.set("state", checked.params.state);
+    if (form.decision !== "allow") {
+      back.searchParams.set("error", "access_denied");
+      return c.redirect(back.toString());
+    }
+    back.searchParams.set("code", await oauth.issueCode(deps.db, checked.params, viewer.userId));
+    back.searchParams.set("iss", deps.config.publicUrl);
+    return c.redirect(back.toString());
+  });
+
+  app.post("/oauth/token", async (c) => {
+    const form = Object.fromEntries(Object.entries(await c.req.parseBody()).map(([k, v]) => [k, typeof v === "string" ? v : undefined]));
+    try {
+      c.header("Cache-Control", "no-store");
+      return c.json(await oauth.exchangeCode(deps.db, form));
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+  });
+
+  app.all("/mcp", async (c) => {
+    const viewer = c.get("viewer");
+    if (!viewer?.role) {
+      c.header("WWW-Authenticate", `Bearer resource_metadata="${deps.config.publicUrl}/.well-known/oauth-protected-resource"`);
+      return c.json({ error: "Connect with OAuth or send an Elemnt API token." }, 401);
+    }
+    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config }, { viewer, workspaceId: c.get("workspaceId") });
+  });
 
   app.get("/", async (c) => {
     const viewer = c.get("viewer");
