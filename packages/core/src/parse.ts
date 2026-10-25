@@ -8,6 +8,7 @@ import { SKIP, visit } from "unist-util-visit";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { isDirective, meaningfulChildren, splitDirective, type ElemntNodeData } from "./directive.js";
+import { runtimeFor, wantsRun } from "./runnable.js";
 import type { AnyComponent, Diagnostic, DirectiveNode, Frontmatter, ParsedDocument } from "./types.js";
 
 const frontmatterSchema = z
@@ -67,6 +68,10 @@ export function parseDocument(source: string, registry: ReadonlyMap<string, AnyC
   const frontmatter = readFrontmatter(tree, diagnostics);
 
   visit(tree, (node, index, parent) => {
+    if (node.type === "code" && wantsRun(node) && !runtimeFor(node)) {
+      diagnostics.push({ severity: "warning", message: `"${node.lang ?? "plain"}" code can't run in the page; only js and python can`, ...at(node) });
+      return;
+    }
     if (!isDirective(node)) return;
     const component = registry.get(node.name);
 

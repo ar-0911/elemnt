@@ -4,6 +4,7 @@ import remarkStringify from "remark-stringify";
 import { unified } from "unified";
 import { visit } from "unist-util-visit";
 import { elemntData, isDirective, labelText, splitDirective } from "./directive.js";
+import { metaWithoutRun } from "./runnable.js";
 import type { AnyComponent, DirectiveNode, MarkdownContent, MarkdownContext, ParsedDocument } from "./types.js";
 
 const stringifier = unified().use(remarkGfm).use(remarkStringify, {
@@ -19,15 +20,19 @@ export interface AgentMarkdownOptions {
   header?: boolean;
 }
 
-/** Depth of the closest heading before each directive, in document order. */
-function sectionDepths(tree: Root): WeakMap<DirectiveNode, number> {
+/** For each directive: depth of the closest heading before it, and its enclosing directive. */
+function directiveContext(tree: Root) {
   const depths = new WeakMap<DirectiveNode, number>();
+  const parents = new WeakMap<DirectiveNode, DirectiveNode>();
   let current = 1;
-  visit(tree, (node) => {
+  visit(tree, (node, _index, parent) => {
     if (node.type === "heading") current = (node as Heading).depth;
-    else if (isDirective(node)) depths.set(node, current);
+    else if (isDirective(node)) {
+      depths.set(node, current);
+      if (parent && isDirective(parent)) parents.set(node, parent);
+    }
   });
-  return depths;
+  return { depths, parents };
 }
 
 /**
@@ -36,13 +41,14 @@ function sectionDepths(tree: Root): WeakMap<DirectiveNode, number> {
  */
 export function toAgentMarkdownTree(doc: ParsedDocument, registry: ReadonlyMap<string, AnyComponent>, options: AgentMarkdownOptions = {}): Root {
   const tree = structuredClone(doc.tree);
-  const depths = sectionDepths(tree);
+  const { depths, parents } = directiveContext(tree);
 
   const ctx: MarkdownContext = {
     children: (node) => project(splitDirective(node).content),
     label: (node) => project(splitDirective(node).label) as PhrasingContent[],
     labelText,
     headingDepth: (node) => Math.min(6, Math.max(2, (depths.get(node) ?? 1) + 1)) as 2 | 3 | 4 | 5 | 6,
+    parent: (node) => parents.get(node),
   };
 
   function project(nodes: readonly MarkdownContent[]): MarkdownContent[] {
@@ -53,6 +59,8 @@ export function toAgentMarkdownTree(doc: ParsedDocument, registry: ReadonlyMap<s
         const component = data && registry.get(node.name);
         // Invalid directives degrade to their content so agents still get the words.
         out.push(...(component ? component.toMarkdown(node, data.props, ctx) : ctx.children(node)));
+      } else if (node.type === "code") {
+        out.push({ ...node, meta: metaWithoutRun(node) });
       } else if ("children" in node) {
         (node as Parent).children = project((node as Parent).children) as Parent["children"];
         out.push(node);

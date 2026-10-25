@@ -150,7 +150,7 @@ describe("registry", () => {
   });
 
   it("every built-in snippet is valid on its own", () => {
-    for (const c of builtinComponents.filter((c) => c.name !== "tab")) {
+    for (const c of builtinComponents.filter((c) => c.name !== "tab" && c.name !== "step")) {
       expect(elemnt.parse(c.authoring.snippet).diagnostics, c.name).toEqual([]);
     }
   });

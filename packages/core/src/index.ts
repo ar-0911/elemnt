@@ -2,12 +2,13 @@ import { builtinComponents } from "./components/index.js";
 import { toHtml, toHtmlTree, type HtmlOptions } from "./html.js";
 import { toAgentMarkdown, toAgentMarkdownTree, type AgentMarkdownOptions } from "./markdown.js";
 import { parseDocument } from "./parse.js";
+import { toSlides, type Slide } from "./slides.js";
 import type { AnyComponent, Diagnostic, Frontmatter, ParsedDocument } from "./types.js";
 
 export * from "./types.js";
 export * from "./components/index.js";
 export { elemntSanitizeSchema } from "./html.js";
-export type { AgentMarkdownOptions, HtmlOptions };
+export type { AgentMarkdownOptions, HtmlOptions, Slide };
 
 export interface CompileResult {
   /** HTML fragment for people. Interactive parts are custom elements that hydrate on the client. */
@@ -27,6 +28,8 @@ export interface Elemnt {
   toHtmlTree(doc: ParsedDocument, options?: HtmlOptions): ReturnType<typeof toHtmlTree>;
   toAgentMarkdown(doc: ParsedDocument, options?: AgentMarkdownOptions): string;
   toAgentMarkdownTree(doc: ParsedDocument, options?: AgentMarkdownOptions): ReturnType<typeof toAgentMarkdownTree>;
+  /** Present mode: the page split into slides at h1/h2 and `---`. */
+  toSlides(doc: ParsedDocument): Slide[];
   /** Parse once, produce both projections. */
   compile(source: string): CompileResult;
   /** Markdown guide to every registered component, for the `/` menu and MCP `get_authoring_guide`. */
@@ -52,6 +55,7 @@ export function createElemnt(options: ElemntOptions = {}): Elemnt {
     toHtmlTree: (doc, o) => toHtmlTree(doc, registry, o),
     toAgentMarkdown: (doc, o) => toAgentMarkdown(doc, registry, o),
     toAgentMarkdownTree: (doc, o) => toAgentMarkdownTree(doc, registry, o),
+    toSlides: (doc) => toSlides(doc, registry),
     compile(source) {
       const doc = parseDocument(source, registry);
       return {

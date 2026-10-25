@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixture: runbook page > projects Markdown for agents 1`] = `
+"# Rotate the production API key
+
+> Quarterly key rotation for the billing service.
+
+## Rotate
+
+Current error rate is \\~0.2% (live value: billing.errors.rate from metrics).
+
+**Runbook \`rotate-api-key\`**. Run the steps in order. Before any step marked "approval required", stop and ask the user. If a step's output doesn't match what is expected, stop and report it.
+
+### Step 1: Create the new key
+
+\`\`\`sh
+acme keys create --name prod-2026
+\`\`\`
+
+### Step 2: Revoke the old key
+
+**Approval required before running this step.**
+
+\`\`\`sh
+acme keys revoke prod-2025
+\`\`\`
+
+Expected output matches the regular expression \`revoked prod-2025\`.
+
+---
+
+## Check your math
+
+\`\`\`python
+print(sum(range(10)))
+\`\`\`
+
+Open incidents (live value: incidents.open from status-api)
+"
+`;
+
+exports[`fixture: runbook page > renders HTML for people 1`] = `
+"<h2>Rotate</h2>
+<p>Current error rate is <elemnt-query data-source="metrics" data-key="billing.errors.rate" data-format="percent">~0.2%</elemnt-query>.</p>
+<elemnt-runbook data-runbook="rotate-api-key"><ol class="elemnt-runbook"><li class="elemnt-runbook-step" data-gate="none"><p class="elemnt-runbook-title">Create the new key</p><pre><code class="language-sh">acme keys create --name prod-2026
+</code></pre></li><li class="elemnt-runbook-step" data-gate="approve"><p class="elemnt-runbook-title">Revoke the old key<span class="elemnt-runbook-gate">Approval required</span></p><pre><code class="language-sh">acme keys revoke prod-2025
+</code></pre><p class="elemnt-runbook-expect">Expected output matches <code>revoked prod-2025</code></p></li></ol></elemnt-runbook>
+<hr>
+<h2>Check your math</h2>
+<elemnt-run data-runtime="python"><pre><code class="language-python">print(sum(range(10)))
+</code></pre></elemnt-run>
+<p class="elemnt-query"><elemnt-query data-source="status-api" data-key="incidents.open" data-format="number">Open incidents</elemnt-query></p>"
+`;
