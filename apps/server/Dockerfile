@@ -22,6 +22,8 @@ COPY --from=build /repo/apps/server/drizzle ./drizzle
 COPY --from=build /repo/apps/server/demo ./demo
 COPY --from=build /repo/apps/web/dist ./web
 ENV ELEMNT_WEB_DIR=/app/web
+# Owned by the server's user so a fresh volume mounted here is writable.
+RUN mkdir -p /data/blobs && chown node:node /data/blobs
 USER node
 EXPOSE 8787
 CMD ["node", "dist/main.js"]
