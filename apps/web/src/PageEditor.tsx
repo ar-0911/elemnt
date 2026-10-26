@@ -12,6 +12,8 @@ import { ComponentMaker } from "./ComponentMaker";
 import { workspaceComponents } from "./SourceEditor";
 import { SourceEditor, type SourceEditorHandle } from "./SourceEditor";
 import { useCompiler } from "./useCompiler";
+import { presets } from "@elemnt/core";
+import { withPreset } from "./look";
 
 type Mode = "split" | "source" | "preview";
 type Panel = "none" | "history" | "comments" | "suggestions" | "repo" | "insights" | "levels";
@@ -207,6 +209,23 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
             {dirty && status.kind !== "saving" ? "Unsaved changes" : status.text}
           </span>
           {errors.length > 0 && <span className="status error">{errors.length} error{errors.length > 1 ? "s" : ""}</span>}
+          {canEdit && (
+            <select
+              className="style-pick"
+              aria-label="Page style"
+              title="Page style (the style: line in the frontmatter)"
+              disabled={readOnly}
+              value={compiled?.style?.preset ?? ""}
+              onChange={(e) => editor.current?.replaceAll(withPreset(source, e.target.value || undefined))}
+            >
+              <option value="">Style: workspace default</option>
+              {Object.values(presets).map((p) => (
+                <option key={p.name} value={p.name}>
+                  Style: {p.label}
+                </option>
+              ))}
+            </select>
+          )}
           <div className="seg" role="group" aria-label="Layout">
             {(["source", "split", "preview"] as Mode[]).map((m) => (
               <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
@@ -300,6 +319,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
                 ref={preview}
                 html={compiled?.html ?? ""}
                 widgets={compiled?.widgets ?? []}
+                {...(compiled?.style ? { pageStyle: compiled.style } : {})}
                 onWidgetFindings={setWidgetFindings}
                 onSelectText={(t) => (setQuote(t), setPanel("comments"))}
               />

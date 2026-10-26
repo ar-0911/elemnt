@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { mountThemeToggle } from "@elemnt/elements";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, getMe, type Me, type Space, type TreePage } from "./api";
 import { PageEditor } from "./PageEditor";
 import { Palette } from "./Palette";
 import { Settings } from "./Settings";
 import { navigate, useRoute } from "./router";
+import { withStyle } from "./look";
 
 const NEW_PAGE = (title: string) => `---
 title: ${title}
@@ -37,6 +39,15 @@ function Tree({ pages, space, current }: { pages: TreePage[]; space: string; cur
       ))}
     </ul>
   );
+}
+
+/** Light/dark switch for the editor; the choice is shared with the reader. */
+function ThemeButton() {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (ref.current) mountThemeToggle(ref.current);
+  }, []);
+  return <button ref={ref} type="button" className="btn ghost theme-btn" />;
 }
 
 export function App() {
@@ -86,7 +97,7 @@ export function App() {
     if (!path || !route.space) return;
     const title = path.split("/").pop()!.replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase());
     try {
-      await api.post(`/api/spaces/${route.space}/pages`, { path, source: NEW_PAGE(title), draft: true });
+      await api.post(`/api/spaces/${route.space}/pages`, { path, source: me?.style ? withStyle(NEW_PAGE(title), me.style) : NEW_PAGE(title), draft: true });
       loadTree();
       navigate(route.space, path);
     } catch (e) {
@@ -135,11 +146,10 @@ export function App() {
               New space
             </button>
           )}
-          {canAdmin && (
-            <button type="button" className="btn ghost" onClick={() => setSettings(true)}>
-              Settings
-            </button>
-          )}
+          <button type="button" className="btn ghost" onClick={() => setSettings(true)}>
+            Settings
+          </button>
+          <ThemeButton />
         </div>
         <div className="me">{me?.email}</div>
       </aside>
@@ -155,7 +165,7 @@ export function App() {
           {spaces.length === 0 ? <p>No spaces yet.{canAdmin ? " Create one to start writing." : ""}</p> : <p>Pick a page, or create a new one.</p>}
         </main>
       )}
-      {settings && <Settings onClose={() => setSettings(false)} />}
+      {settings && <Settings canAdmin={canAdmin} onClose={() => setSettings(false)} />}
       {palette && route.space && (
         <Palette
           space={route.space}

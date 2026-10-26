@@ -36,6 +36,34 @@ Readers switch between the two with a **Page / Markdown** toggle, so you always 
 
 ![The split-view editor](docs/images/editor.png)
 
+## Docs that look like a designed web page
+
+A docs page should pull the reader in, not just sit there. Every Elemnt page can have its own look, set in its frontmatter, and readers can switch light and dark mode on any page.
+
+```yaml
+---
+title: Payments, explained
+style:
+  preset: aurora            # clean, aurora, editorial, terminal, blueprint, sunset, paper
+  headingFont: Space Grotesk  # any Google Fonts family
+  accent: "#7c3aed"
+---
+```
+
+| Aurora | Editorial | Terminal |
+| --- | --- | --- |
+| ![A page in the aurora style](docs/images/style-aurora.png) | ![A postmortem in the editorial style](docs/images/style-editorial.png) | ![A CLI cheat sheet in the terminal style](docs/images/style-terminal.png) |
+
+- **Layout components** made for that: `:::hero` with background art and call-to-action buttons, `::::cards`, `:::stats` big numbers, `::::timeline`, full-width `:::band`s, `:badge`s and `:::quote`s.
+- **Inline SVG graphics** with `:::graphic`, animated with SMIL if you like, drawn right in the page in the page's colours. They're checked against an allowlist: no script, no external URLs. For anything more custom, a `:::widget` with only HTML and CSS runs in the sandbox without a click.
+- **Your organization's theme.** Admins set a preset, colours, fonts, notes on voice and tone, and optional CSS for the whole workspace, and can lock it so every page stays on brand. The workspace's saved components show up in the `/` menu and for Claude.
+- **Your own style.** Each person saves the style they like; new pages start with it.
+- **Claude asks before it styles.** Over MCP, Claude calls `get_style_guide` before it writes. If your organization's theme is locked it follows it. Otherwise it asks you which style and fonts you'd like (or uses your saved one), then writes an eye-catching page that still reads clearly. The `elemnt-docs-style` skill in [integrations/claude-code](integrations/claude-code) spells this out.
+
+Agents still get plain Markdown: a hero becomes a heading and a paragraph, cards become sections, a graphic becomes its alt text.
+
+![Settings: pick a preset, colours and fonts with a live sample](docs/images/style-settings.png)
+
 ## What you can do with it
 
 - **A rich explainer for any repo.** One page per project, linked from the README with a badge and kept current by the drift check. It has an architecture diagram, a quickstart, a tour of the code and a live demo. Claude Code writes it with the bundled `repo-explainer` skill.
@@ -104,7 +132,7 @@ The editor reports errors in component blocks with line numbers, and a page with
 
 - **AI never publishes.** Agent writes are drafts or suggestions. Accepting a suggestion produces a draft, and a person publishes it.
 - **Bring your own key.** Anthropic keys are encrypted at rest (AES-256-GCM) and never sent back to the browser.
-- **No untrusted HTML in pages.** Raw HTML in Markdown is dropped, and the compiled output is sanitized against an allowlist.
+- **No untrusted HTML in pages.** Raw HTML in Markdown is dropped, and the compiled output is sanitized against an allowlist. Inline SVG graphics go through a stricter SVG allowlist. Page styles are data (hex colours, font names, enum values), never CSS; only workspace admins can add CSS, and it can't import or load remote URLs.
 - **Custom code runs in a sandbox.** Widgets and runnable code are served from a separate origin and framed with `sandbox="allow-scripts"` only. Their CSP blocks network, eval, WebAssembly, workers and forms. On top of that:
   - a label the widget can't cover
   - click-to-run on public pages of unverified workspaces
@@ -169,4 +197,4 @@ For hot reload:
 
 ## Status
 
-Elemnt is early. Today it runs as a single Node server with Postgres, packaged for Docker. Cloudflare and AWS deployment targets come next. Expect breaking changes before 1.0.
+Elemnt is early. It runs as a single Node server with Postgres, packaged for Docker, with deploy targets for [Cloudflare Containers + R2](deploy/cloudflare/README.md) and [AWS App Runner + RDS + S3](deploy/aws/README.md). Both targets are new and not yet proven in production. Expect breaking changes before 1.0.

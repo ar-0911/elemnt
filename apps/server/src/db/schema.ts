@@ -1,3 +1,4 @@
+import type { OrgTheme, PageStyle } from "@elemnt/core";
 import { sql } from "drizzle-orm";
 import { bigint, bigserial, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
@@ -7,6 +8,8 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
+  /** The look this person likes for new pages; Claude reads it over MCP before writing. */
+  style: jsonb("style").$type<PageStyle>(),
   createdAt: createdAt(),
 });
 
@@ -26,6 +29,8 @@ export const workspaces = pgTable("workspaces", {
   askPublic: boolean("ask_public").notNull().default(false),
   /** Named live-data sources for `:query`, configured by admins. */
   querySources: jsonb("query_sources").$type<Record<string, QuerySource>>().notNull().default({}),
+  /** Organization theme: preset, colours, fonts, notes and admin CSS for every page. */
+  theme: jsonb("theme").$type<OrgTheme>(),
   createdAt: createdAt(),
 });
 
@@ -143,6 +148,8 @@ export const revisions = pgTable(
     /** From frontmatter at save time, so publishing a draft needs no recompile. */
     title: text("title"),
     summary: text("summary"),
+    /** The page's `style:` frontmatter, validated. */
+    style: jsonb("style").$type<PageStyle>(),
     authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
     message: text("message"),
     createdAt: createdAt(),

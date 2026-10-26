@@ -117,10 +117,11 @@ export async function createPage(deps: PageDeps, input: { spaceId: string; path:
   const revisionId = newId("rev");
   const title = result.frontmatter.title ?? path.split("/").pop()!;
   const summary = result.frontmatter.summary ?? null;
+  const style = result.frontmatter.style ?? null;
 
   await deps.db.transaction(async (tx) => {
     await tx.insert(pages).values({ id: pageId, spaceId: input.spaceId, parentId: parent?.id ?? null, path, title, summary });
-    await tx.insert(revisions).values({ id: revisionId, pageId, parentRevisionId: null, ...hashes, title, summary, authorId: input.authorId, message: input.message ?? null });
+    await tx.insert(revisions).values({ id: revisionId, pageId, parentRevisionId: null, ...hashes, title, summary, style, authorId: input.authorId, message: input.message ?? null });
     await tx
       .update(pages)
       .set(input.draft ? { draftRevisionId: revisionId } : { publishedRevisionId: revisionId, searchText: searchTextFrom(result.markdown) })
@@ -162,9 +163,10 @@ export async function updatePage(
   const revisionId = newId("rev");
   const title = result.frontmatter.title ?? page.path.split("/").pop()!;
   const summary = result.frontmatter.summary ?? null;
+  const style = result.frontmatter.style ?? null;
 
   await deps.db.transaction(async (tx) => {
-    await tx.insert(revisions).values({ id: revisionId, pageId: page.id, parentRevisionId: input.baseRevisionId, ...hashes, title, summary, authorId: input.authorId, message: input.message ?? null });
+    await tx.insert(revisions).values({ id: revisionId, pageId: page.id, parentRevisionId: input.baseRevisionId, ...hashes, title, summary, style, authorId: input.authorId, message: input.message ?? null });
     const set = publish
       ? { publishedRevisionId: revisionId, draftRevisionId: null, title, summary, searchText: searchTextFrom(result.markdown), updatedAt: new Date() }
       : { draftRevisionId: revisionId, updatedAt: new Date() };

@@ -1,4 +1,4 @@
-import type { Diagnostic, WidgetCode } from "@elemnt/core";
+import type { Diagnostic, PageStyle, WidgetCode } from "@elemnt/core";
 import { useEffect, useRef, useState } from "react";
 
 export interface Compiled {
@@ -7,6 +7,8 @@ export interface Compiled {
   diagnostics: Diagnostic[];
   /** Code of every valid widget, for the preview to register with the sandbox. */
   widgets: WidgetCode[];
+  /** The page's `style:` frontmatter, if valid. */
+  style?: PageStyle;
 }
 
 /** Compiles in a Web Worker so typing never waits on the parser. Only the latest result is kept. */

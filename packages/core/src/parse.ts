@@ -10,6 +10,7 @@ import { z } from "zod";
 import { isDirective, meaningfulChildren, splitDirective, type ElemntNodeData } from "./directive.js";
 import { runtimeFor, wantsRun } from "./runnable.js";
 import type { AnyComponent, Diagnostic, DirectiveNode, Frontmatter, ParsedDocument } from "./types.js";
+import { parsePageStyle } from "./style.js";
 
 const frontmatterSchema = z
   .object({
@@ -42,7 +43,14 @@ function readFrontmatter(tree: Root, diagnostics: Diagnostic[]): Frontmatter {
     }
     return {};
   }
-  return result.data as Frontmatter;
+  const data = result.data as Frontmatter;
+  if ("style" in data) {
+    const { style, problems } = parsePageStyle(data.style);
+    for (const message of problems) diagnostics.push({ severity: "error", message: `Frontmatter ${message}`, ...at(first) });
+    if (style) data.style = style;
+    else delete data.style;
+  }
+  return data;
 }
 
 /** Rebuilds the literal source of an unknown text directive, e.g. `10:30` or `ratio:high`. */

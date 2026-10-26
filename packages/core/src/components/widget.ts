@@ -57,7 +57,10 @@ export const widget: ElemntComponent<z.infer<typeof props>> = {
     return problems;
   },
   render(node, { summary, height, title }) {
-    return h("elemnt-widget", { dataHash: widgetHash(widgetCode(node)), dataHeight: String(height), ...(title ? { dataTitle: title } : {}) }, [
+    const code = widgetCode(node);
+    // HTML and CSS only: nothing runs, so it can load without a click.
+    const still = code.js.trim() ? {} : { dataStatic: "" };
+    return h("elemnt-widget", { dataHash: widgetHash(code), dataHeight: String(height), ...(title ? { dataTitle: title } : {}), ...still }, [
       h("div", { className: ["elemnt-widget-summary"] }, [h("p", [h("strong", title ? `${title}: ` : "Interactive widget: "), summary])]),
     ]);
   },
@@ -65,7 +68,7 @@ export const widget: ElemntComponent<z.infer<typeof props>> = {
     return [{ type: "paragraph", children: [{ type: "strong", children: [{ type: "text", value: title ? `Interactive widget (${title}):` : "Interactive widget:" }] }, { type: "text", value: ` ${summary}` }] }];
   },
   authoring: {
-    doc: "Your own HTML/CSS/JS, run in a sandbox with no network access. summary is required: it is all agents and no-JS readers get. The frame grows to fit its content. The bridge gives you elemnt.onTheme(cb) (called with true for dark), elemnt.open(url) (asks the reader first) and elemnt.copy(text).",
+    doc: "Your own HTML/CSS/JS, run in a sandbox with no network access. Use it for any layout the built-in components can't express; with no ```js block it is static and loads without a click. The frame gets the page's colour and font tokens (var(--accent), var(--font-head)…). summary is required: it is all agents and no-JS readers get. The frame grows to fit its content. The bridge gives you elemnt.onTheme(cb) (called with true for dark), elemnt.open(url) (asks the reader first) and elemnt.copy(text).",
     snippet:
       ':::widget{height=220 summary="A slider that shows how monthly cost grows with the number of seats: $8 per seat."}\n```html\n<input id="s" type="range" min="1" max="200" value="20"> <output id="o"></output>\n```\n```js\nconst s = document.getElementById("s"), o = document.getElementById("o");\nconst draw = () => (o.textContent = `${s.value} seats: $${s.value * 8}/month`);\ns.oninput = draw; draw();\n```\n:::',
   },

@@ -75,6 +75,9 @@ open http://localhost:8787/s/docs/hello
 | `POST /api/pages/:id/repo/check`, `POST …/repo/pin` | Run the drift check now; mark the page current at a commit |
 | `POST /integrations/github/webhook` | GitHub push events (signed with `GITHUB_WEBHOOK_SECRET`) trigger drift checks for pages on that branch |
 | `GET /r/:owner/:repo`, `…/badge.svg` | The README short link to a repo's explainer page, and its badge |
+| `GET`/`PUT /api/settings/theme` | The organization theme `{theme}` (admins write; `null` removes it) |
+| `GET`/`PUT /api/me/style` | Your own default page style `{style}` |
+| `POST /mcp` tools `get_style_guide`, `save_my_style` | The style guide Claude reads before writing, and saving the style the user picked |
 | `POST /api/preview` | Compile without saving, for the editor |
 | `GET /integrations/linkedin/connect` | Connect a LinkedIn account |
 | `POST /api/pages/:id/linkedin` | Post a public page to LinkedIn `{commentary}` |
@@ -93,6 +96,16 @@ GitHub access, in order of preference:
 1. A GitHub App with read-only Contents and Metadata, subscribed to push events: set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_WEBHOOK_SECRET`, and point the webhook at `/integrations/github/webhook`.
 2. A `GITHUB_TOKEN`.
 3. Nothing, for public repos, with GitHub's low anonymous rate limit. Without the App there are no push events, so run checks from the editor's Repo panel or `POST /api/pages/:id/repo/check`.
+
+## Page styles and themes
+
+A page's look comes from three layers: a preset (`clean`, `aurora`, `editorial`, `terminal`, `blueprint`, `sunset`, `paper`), the organization theme, and the page's own `style:` frontmatter. A locked organization theme keeps its colours and fonts on every page. Styles are validated data (hex colours, font names, enums) compiled to CSS custom properties by `@elemnt/core`; each revision stores its validated style. Fonts load from Google Fonts unless `ELEMNT_FONTS=off`. The reader and present mode set light or dark before first paint from the reader's saved choice, else the style's `mode`.
+
+## Storage and hosting
+
+Postgres holds everything except page bodies. Page sources and rendered HTML are content-addressed blobs: on local disk at `ELEMNT_BLOB_DIR` by default, or in any S3-compatible bucket (AWS S3, Cloudflare R2, MinIO) when `ELEMNT_S3_BUCKET` is set. With S3 the server signs requests itself; it uses `ELEMNT_S3_ACCESS_KEY_ID` and `ELEMNT_S3_SECRET_ACCESS_KEY` when set, otherwise the AWS container role (App Runner, ECS) or the EC2 instance role.
+
+`GET /healthz` returns 200 when the database answers. Where you can't run the bootstrap script, set `ELEMNT_OWNER_EMAIL`: the first start creates the workspace for that owner and prints their API token once. Ready-made targets live in [deploy/cloudflare](../../deploy/cloudflare/README.md) and [deploy/aws](../../deploy/aws/README.md). Run one instance: rate limits and render caches are in memory.
 
 ## Widgets and the sandbox
 

@@ -10,15 +10,16 @@ Docs live in Elemnt, not in this repository. Never write documentation files int
 ## Steps
 
 1. **Find the home for the doc.** Call `list_spaces`. If the user named a space, use it; otherwise pick the one that matches this project and say which you chose. Call `search` for the topic to find an existing page before creating a new one.
-2. **Learn the syntax once.** Call `get_authoring_guide`. Elemnt pages are Markdown plus directives such as `:::callout`, `:::tabs`, `:::steps`, `:::details`, `:::diagram` (Mermaid) and `:::runbook`.
+2. **Pick the style, then learn the syntax.** Follow the `elemnt-docs-style` skill: call `get_style_guide`, follow the organization theme if there is one, otherwise ask the user what style and fonts they'd like (or use their saved style). Then call `get_authoring_guide`. Elemnt pages are Markdown plus directives such as `:::callout`, `:::tabs`, `:::steps`, `:::details`, `:::diagram` (Mermaid) and `:::runbook`.
 3. **Read the code, not your memory.** Read the files that matter: entry points, public APIs, config, scripts, README, tests. Every command, flag, path and version you write must come from the repository. Where something is unknown, write a visible `TODO:` rather than guessing.
-4. **Write for a new teammate.** Open with why the thing exists and what it does, in two or three sentences. Then:
+4. **Write for a new teammate, and make them want to read it.** Open with a `:::hero` that says why the thing exists and what it does, in two or three sentences. Then:
    - a `:::steps` block for any procedure (setup, deploy, release)
    - `:::tabs` when there are alternatives (npm / pnpm, macOS / Linux)
    - a `:::callout{type=warn}` only for real hazards
    - a `:::diagram` with Mermaid when there is a flow or architecture worth seeing
    - code blocks with the exact commands
-   - frontmatter with `title` and a one-line `summary`
+   - `:::stats`, `::::cards` and `:::graphic` (inline SVG) where they explain something faster than prose
+   - frontmatter with `title`, a one-line `summary` and the `style:` you agreed on
    Keep paragraphs short. Prefer one focused page per topic over one huge page.
 5. **Validate.** Call `validate` with the full source and fix every error.
 6. **Save.**

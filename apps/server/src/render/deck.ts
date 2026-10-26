@@ -1,5 +1,5 @@
 import { contentCss, themeTokensCss } from "@elemnt/core";
-import { escapeHtml, jsonForScript } from "./page.js";
+import { bodyClass, escapeHtml, jsonForScript, lookHead, type Look } from "./page.js";
 
 /**
  * Present mode and the LinkedIn carousel. Both come from the page split into
@@ -16,15 +16,16 @@ export interface DeckInput {
   slides: { title: string | undefined; html: string }[];
   mode: "present" | "carousel";
   sandboxUrl?: string;
+  look?: Look;
 }
 
 const BASE = `${themeTokensCss}
-*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body,system-ui,-apple-system,"Segoe UI",sans-serif)}
 ${contentCss}
 .elemnt-slide .elemnt-page{max-width:none}`;
 
 const PRESENT_CSS = `
-.deck{height:100vh;display:flex;flex-direction:column;background:var(--bg)}
+.deck{height:100vh;display:flex;flex-direction:column}
 .elemnt-slide{flex:1;overflow:auto;padding:6vh 8vw;font-size:clamp(18px,2.2vw,30px);line-height:1.5}
 .elemnt-slide h1{font-size:2.4em;margin-top:18vh}.elemnt-slide h2{font-size:1.7em;margin-top:0}
 .deck-bar{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 16px;border-top:1px solid var(--line);font:13px system-ui;color:var(--muted)}
@@ -70,7 +71,8 @@ document.getElementById("print")?.addEventListener("click", () => print());`;
 <title>${t} · ${d.mode === "present" ? "Present" : "Carousel"}</title>
 <link rel="canonical" href="${escapeHtml(d.canonicalUrl)}"><meta name="robots" content="noindex">
 <style>${BASE}${d.mode === "present" ? PRESENT_CSS : CAROUSEL_CSS}</style>
-</head><body>
+${lookHead(d.nonce, d.look)}
+</head><body${bodyClass(d.look)}>
 ${body}
 <script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: d.sandboxUrl ?? null })}</script>
 <script type="module" nonce="${d.nonce}">${script}</script>
