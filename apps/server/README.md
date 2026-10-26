@@ -7,20 +7,20 @@ The Elemnt API, reader and LinkedIn integration. Hono on Node, Postgres through 
 ```sh
 cp .env.example .env            # set ELEMNT_SECRET_KEY at least
 docker compose up -d
-docker compose exec server node dist/bootstrap.js --email you@example.com
 ```
+
+Open http://localhost:8787 and sign up. The first account creates the workspace and owns it; later people join with an invite link from Settings → People (or anyone can, as a viewer, with `ELEMNT_SIGNUP=open`).
 
 Or without Docker, against your own Postgres:
 
 ```sh
 export DATABASE_URL=postgres://… ELEMNT_SECRET_KEY=$(openssl rand -base64 32)
-pnpm --filter @elemnt/server bootstrap -- --email you@example.com
 pnpm --filter @elemnt/server dev
 ```
 
 Claude features use the workspace's own Anthropic API key, set by an admin in the editor under Settings (or `ANTHROPIC_API_KEY` on the server as a fallback). Requests use `claude-opus-5-5`.
 
-Bootstrap prints an API token. Use it as `Authorization: Bearer …`, or paste it at `/login`.
+Passwords are hashed with scrypt; a browser session is a 30-day token in an httpOnly cookie. For scripts and CI, create an API token under Settings → Account and send it as `Authorization: Bearer …`. The bootstrap script (`node dist/bootstrap.js --email …`) still works for headless setups: it prints a token you can paste under "Sign in with an API token" at `/login`, then set a password in Settings.
 
 The editor lives at `/app`. The server serves the built `apps/web/dist` (set `ELEMNT_WEB_DIR` to move it), so run `pnpm build` at the root first. For editor work with hot reload, run the server and `pnpm --filter @elemnt/web dev`, then open http://localhost:5173/app/.
 

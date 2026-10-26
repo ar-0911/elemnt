@@ -36,7 +36,10 @@ import { createRequire } from "node:module";
 import { workspaces } from "./db/schema.js";
 import { eq, sql } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
-import { getWorkspace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
+import { hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
+import * as accounts from "./services/accounts.js";
+import { authPage, loginPage, signupPage } from "./render/auth.js";
+import { roles } from "./db/schema.js";
 
 export interface AppDeps {
   db: Db;
@@ -90,7 +93,6 @@ export function createApp(deps: AppDeps) {
     const host = new URL(sandboxUrl).host;
     app.use(async (c, next) => (new URL(c.req.url).host === host ? sandbox.fetch(c.req.raw) : next()));
   }
-  if (deps.webDir) app.route("/app", editorApp(deps.webDir, sandboxUrl));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message, ...err.details }, err.status);
@@ -99,8 +101,8 @@ export function createApp(deps: AppDeps) {
     return c.json({ error: "Something went wrong on our side." }, 500);
   });
 
-  /** For load balancers and App Runner: 200 when the server can reach its database, before any workspace
-   * exists (the workspace middleware below would refuse). */
+  /** For load balancers and App Runner: 200 when the server can reach its database, even
+   * before the first account exists. */
   app.get("/healthz", async (c) => {
     try {
       await deps.db.execute(sql`select 1`);
@@ -111,14 +113,32 @@ export function createApp(deps: AppDeps) {
   });
 
   app.use(async (c, next) => {
-    workspaceId ??= (await getWorkspace(deps.db, deps.config.workspaceSlug)).id;
-    c.set("workspaceId", workspaceId);
     c.set("nonce", randomBytes(16).toString("base64"));
+    if (!workspaceId) {
+      const [ws] = await deps.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, deps.config.workspaceSlug));
+      workspaceId = ws?.id;
+    }
+    // A fresh install has no workspace until the first person signs up.
+    if (!workspaceId) {
+      const path = new URL(c.req.url).pathname;
+      if (path === "/signup" || path === "/login") return next();
+      if (c.req.method === "GET" && !path.startsWith("/api/") && path !== "/mcp") return c.redirect("/signup");
+      throw new HttpError(409, "Elemnt isn't set up yet. Create the first account at /signup.");
+    }
+    c.set("workspaceId", workspaceId);
     const bearer = c.req.header("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1];
     const token = bearer ?? getCookie(c, TOKEN_COOKIE);
     c.set("viewer", token ? await viewerForToken(deps.db, workspaceId, token) : undefined);
     await next();
   });
+
+  // Signed-out visitors go straight to sign-in instead of loading an empty editor.
+  app.use("/app/*", async (c, next) => {
+    const path = new URL(c.req.url).pathname;
+    if (!c.get("viewer") && !path.startsWith("/app/assets/")) return c.redirect(`/login?next=${encodeURIComponent(path)}`);
+    await next();
+  });
+  if (deps.webDir) app.route("/app", editorApp(deps.webDir, sandboxUrl));
 
   // ---------- helpers ----------
 
@@ -154,7 +174,7 @@ export function createApp(deps: AppDeps) {
     return /text\/markdown/.test(accept) && !/text\/html/.test(accept);
   }
 
-  function html(c: Context<Env>, body: string, status: 200 | 404 = 200) {
+  function html(c: Context<Env>, body: string, status: 200 | 401 | 403 | 404 | 409 | 422 | 429 = 200) {
     c.header("Content-Security-Policy", contentSecurityPolicy(c.get("nonce"), sandboxUrl));
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -169,31 +189,142 @@ export function createApp(deps: AppDeps) {
 
   // ---------- sign-in ----------
 
-  app.get("/login", (c) =>
-    html(
-      c,
-      renderSimple(
-        c.get("nonce"),
-        "Sign in · Elemnt",
-        `<h1>Sign in</h1><p>Paste an API token. Run <code>pnpm --filter @elemnt/server bootstrap</code> to create your first one.</p>
-<form method="post" action="/login"><input type="hidden" name="next" value="${escapeHtml(c.req.query("next") ?? "/")}"><p><label for="token">API token</label><br><input id="token" name="token" type="password" required size="48" autocomplete="off"></p><p><button class="btn" type="submit">Sign in</button></p></form>`,
-      ),
-    ),
-  );
+  const signupOpen = deps.config.signupOpen === true;
+  const loginLog = new Map<string, number[]>();
+  const safeNext = (next: unknown) => {
+    const n = typeof next === "string" ? next : "/app/";
+    return n.startsWith("/") && !n.startsWith("//") && !n.startsWith("/\\") ? n : "/app/";
+  };
+  const signIn = (c: Context<Env>, token: string) =>
+    setCookie(c, TOKEN_COOKIE, token, { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * accounts.SESSION_DAYS });
+
+  app.get("/login", async (c) => {
+    if (!workspaceId) return c.redirect("/signup");
+    if (c.get("viewer")?.role) return c.redirect(safeNext(c.req.query("next")));
+    return html(c, loginPage(c.get("nonce"), { next: safeNext(c.req.query("next")), signupOpen, ...(c.req.query("welcome") ? { notice: "Your password is set. Sign in with it any time." } : {}) }));
+  });
 
   app.post("/login", async (c) => {
     const form = await c.req.parseBody();
-    const token = String(form.token ?? "");
-    const viewer = token ? await viewerForToken(deps.db, c.get("workspaceId"), token) : undefined;
-    if (!viewer?.role) return html(c, renderSimple(c.get("nonce"), "Sign in · Elemnt", `<h1>Sign in</h1><p>That token isn't valid for this workspace. <a href="/login">Try again</a>.</p>`));
-    setCookie(c, TOKEN_COOKIE, token, { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
-    const next = String(form.next ?? "/");
-    return c.redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/");
+    const next = safeNext(form.next);
+    const identifier = String(form.identifier ?? "").slice(0, 200);
+    try {
+      limit(loginLog, `${visitor(c)}|${identifier.toLowerCase()}`, 20, "Too many sign-in attempts. Wait a few minutes and try again.");
+    } catch (e) {
+      return html(c, loginPage(c.get("nonce"), { next, identifier, signupOpen, error: (e as Error).message }), 429);
+    }
+    if (typeof form.token === "string" && form.token) {
+      const viewer = await viewerForToken(deps.db, c.get("workspaceId"), form.token.trim());
+      if (!viewer?.role) return html(c, loginPage(c.get("nonce"), { next, signupOpen, error: "That token isn't valid for this workspace." }), 401);
+      signIn(c, form.token.trim());
+      return c.redirect(next);
+    }
+    try {
+      const { token } = await accounts.login(deps.db, identifier, String(form.password ?? ""));
+      const viewer = await viewerForToken(deps.db, c.get("workspaceId"), token);
+      if (!viewer?.role) {
+        await accounts.endSession(deps.db, token);
+        return html(c, loginPage(c.get("nonce"), { next, identifier, signupOpen, error: "Your account isn't a member of this workspace anymore." }), 403);
+      }
+      signIn(c, token);
+      return c.redirect(next);
+    } catch (e) {
+      if (!(e instanceof HttpError)) throw e;
+      return html(c, loginPage(c.get("nonce"), { next, identifier, signupOpen, error: e.message }), 401);
+    }
   });
 
-  app.post("/logout", (c) => {
+  app.get("/signup", async (c) => {
+    if (c.get("viewer")?.role) return c.redirect("/app/");
+    const invite = c.req.query("invite");
+    const state = await accounts.signupState(deps.db, deps.config.workspaceSlug, signupOpen, invite);
+    return html(
+      c,
+      signupPage(c.get("nonce"), {
+        next: safeNext(c.req.query("next")),
+        ...(invite ? { invite } : {}),
+        firstAccount: state.firstAccount,
+        ...(state.allowed ? { role: state.role } : { blocked: state.reason }),
+        ...(state.workspaceName ? { workspaceName: state.workspaceName } : {}),
+      }),
+    );
+  });
+
+  app.post("/signup", async (c) => {
+    const form = Object.fromEntries(Object.entries(await c.req.parseBody()).map(([k, v]) => [k, typeof v === "string" ? v : ""]));
+    const next = safeNext(form.next);
+    const values = { name: form.name ?? "", username: form.username ?? "", email: form.email ?? "" };
+    const state = await accounts.signupState(deps.db, deps.config.workspaceSlug, signupOpen, form.invite || undefined);
+    const again = (status: 403 | 409 | 422 | 429, extra: { errors?: Record<string, string>; error?: string }) =>
+      html(
+        c,
+        signupPage(c.get("nonce"), { next, ...(form.invite ? { invite: form.invite } : {}), values, firstAccount: state.firstAccount, ...(state.allowed ? { role: state.role } : { blocked: state.reason }), ...(state.workspaceName ? { workspaceName: state.workspaceName } : {}), ...extra }),
+        status,
+      );
+    try {
+      limit(loginLog, `signup|${visitor(c)}`, 10, "Too many sign-ups from here. Try again later.");
+      const made = await accounts.signup(deps.db, deps.config.workspaceSlug, signupOpen, { ...values, password: form.password ?? "", ...(form.invite ? { invite: form.invite } : {}) });
+      workspaceId ??= made.workspace.id;
+      signIn(c, made.token);
+      return c.redirect(made.role === "owner" && state.firstAccount ? "/app/?welcome=1" : next === "/app/" ? "/app/?welcome=1" : next);
+    } catch (e) {
+      if (e instanceof z.ZodError) return again(422, { errors: Object.fromEntries(e.issues.map((i) => [String(i.path[0]), i.message])) });
+      if (e instanceof HttpError) {
+        const field = (e.details as { field?: string } | undefined)?.field;
+        return again(e.status === 429 ? 429 : e.status === 409 ? 409 : 403, field ? { errors: { [field]: e.message } } : { error: e.message });
+      }
+      throw e;
+    }
+  });
+
+  app.post("/logout", async (c) => {
+    const token = getCookie(c, TOKEN_COOKIE);
+    if (token) await accounts.endSession(deps.db, token);
     deleteCookie(c, TOKEN_COOKIE, { path: "/" });
-    return c.redirect("/");
+    return c.redirect("/login");
+  });
+
+  // ---------- your account, people and invites ----------
+
+  app.get("/api/me/account", async (c) => c.json(await accounts.account(deps.db, requireRole(c, "viewer").userId)));
+  app.put("/api/me/account", async (c) => c.json(await accounts.updateProfile(deps.db, requireRole(c, "viewer").userId, await c.req.json())));
+  app.put("/api/me/password", async (c) => {
+    const viewer = requireRole(c, "viewer");
+    await accounts.changePassword(deps.db, viewer.userId, await c.req.json(), getCookie(c, TOKEN_COOKIE));
+    return c.body(null, 204);
+  });
+  app.get("/api/me/tokens", async (c) => c.json(await accounts.listTokens(deps.db, requireRole(c, "viewer").userId)));
+  app.post("/api/me/tokens", async (c) => c.json(await accounts.createToken(deps.db, requireRole(c, "viewer").userId, await c.req.json()), 201));
+  app.delete("/api/me/tokens/:id", async (c) => {
+    await accounts.revokeToken(deps.db, requireRole(c, "viewer").userId, c.req.param("id"));
+    return c.body(null, 204);
+  });
+
+  app.get("/api/members", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ members: await accounts.listMembers(deps.db, c.get("workspaceId")), invites: await accounts.listInvites(deps.db, c.get("workspaceId")), signupOpen });
+  });
+  app.put("/api/members/:userId", async (c) => {
+    const viewer = requireRole(c, "admin");
+    const { role } = z.object({ role: z.enum(roles) }).parse(await c.req.json());
+    await accounts.setRole(deps.db, c.get("workspaceId"), viewer.role!, c.req.param("userId"), role);
+    return c.body(null, 204);
+  });
+  app.delete("/api/members/:userId", async (c) => {
+    const viewer = requireRole(c, "admin");
+    if (c.req.param("userId") === viewer.userId) throw new HttpError(409, "You can't remove yourself. Ask another admin.");
+    await accounts.removeMember(deps.db, c.get("workspaceId"), viewer.role!, c.req.param("userId"));
+    return c.body(null, 204);
+  });
+  app.post("/api/invites", async (c) => {
+    const viewer = requireRole(c, "admin");
+    const made = await accounts.createInvite(deps.db, c.get("workspaceId"), { userId: viewer.userId, role: viewer.role! }, await c.req.json());
+    return c.json({ ...made, url: `${deps.config.publicUrl}/signup?invite=${encodeURIComponent(made.code)}` }, 201);
+  });
+  app.delete("/api/invites/:id", async (c) => {
+    requireRole(c, "admin");
+    await accounts.revokeInvite(deps.db, c.get("workspaceId"), c.req.param("id"));
+    return c.body(null, 204);
   });
 
   // ---------- API ----------
@@ -201,8 +332,8 @@ export function createApp(deps: AppDeps) {
   app.get("/api/me", async (c) => {
     const viewer = requireRole(c, "viewer");
     const account = await linkedin.getAccount(deps.db, viewer.userId);
-    const [theme, style] = await Promise.all([themeSvc.getOrgTheme(deps.db, c.get("workspaceId")), themeSvc.getUserStyle(deps.db, viewer.userId)]);
-    return c.json({ ...viewer, sandboxUrl: sandboxUrl ?? null, theme, style, fonts: deps.config.fonts !== false, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
+    const [theme, style, profile] = await Promise.all([themeSvc.getOrgTheme(deps.db, c.get("workspaceId")), themeSvc.getUserStyle(deps.db, viewer.userId), accounts.account(deps.db, viewer.userId)]);
+    return c.json({ ...viewer, name: profile.name, username: profile.username, hasPassword: profile.hasPassword, sandboxUrl: sandboxUrl ?? null, theme, style, fonts: deps.config.fonts !== false, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
   });
 
   app.post("/api/preview", async (c) => {
@@ -966,15 +1097,16 @@ export function createApp(deps: AppDeps) {
       .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`)
       .join("");
     const canWrite = hasRole(viewer, "editor");
+    const can = canWrite ? ["search and read the docs you can read", "create drafts and suggest edits, which stay unpublished until a person reviews them", "add comments"] : ["search and read the docs you can read", "add comments"];
     return html(
       c,
-      renderSimple(
+      authPage(
         c.get("nonce"),
-        "Connect · Elemnt",
-        `<h1>Connect ${escapeHtml(checked.clientName)} to Elemnt?</h1>
-<p>It will act as <strong>${escapeHtml(viewer.email)}</strong> and can search and read this workspace's docs${canWrite ? ", create drafts, suggest edits and comment. Nothing it writes is published until a person reviews it" : " and comment"}.</p>
-<p>Access lasts 30 days. It returns to <code>${escapeHtml(new URL(p.redirectUri).origin)}</code>.</p>
-<form method="post" action="/oauth/authorize">${hidden}<p><button class="btn" type="submit" name="decision" value="allow">Allow</button> <button class="btn" type="submit" name="decision" value="deny">Cancel</button></p></form>`,
+        "Connect",
+        `<h1>Connect ${escapeHtml(checked.clientName)}?</h1><p class="lede">It will act as <strong>${escapeHtml(viewer.email)}</strong>.</p>
+<p>It will be able to:</p><ul class="scopes">${can.map((x) => `<li>${x}</li>`).join("")}</ul>
+<form method="post" action="/oauth/authorize">${hidden}<div class="row"><button class="btn secondary" type="submit" name="decision" value="deny">Cancel</button><button class="btn" type="submit" name="decision" value="allow" autofocus>Allow</button></div></form>
+<p class="foot">Access lasts 30 days and returns to ${escapeHtml(new URL(p.redirectUri).origin)}.</p>`,
       ),
     );
   });

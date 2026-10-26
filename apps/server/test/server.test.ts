@@ -160,7 +160,7 @@ describe("reader", () => {
   it("refuses open redirects after sign-in", async () => {
     const form = new URLSearchParams({ token: t.ownerToken, next: "//evil.example" });
     const res = await t.app.request("/login", { method: "POST", body: form, headers: { "Content-Type": "application/x-www-form-urlencoded" } });
-    expect(res.headers.get("location")).toBe("/");
+    expect(res.headers.get("location")).toBe("/app/");
   });
 
   it("counts views by format and source", async () => {

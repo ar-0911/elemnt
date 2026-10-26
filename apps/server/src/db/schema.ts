@@ -8,6 +8,10 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
+  /** Sign-in name, lowercase. Null for people created before accounts had one. */
+  username: text("username").unique(),
+  /** scrypt hash (see lib/password.ts). Null for token-only accounts. */
+  passwordHash: text("password_hash"),
   /** The look this person likes for new pages; Claude reads it over MCP before writing. */
   style: jsonb("style").$type<PageStyle>(),
   createdAt: createdAt(),
@@ -67,6 +71,22 @@ export const apiTokens = pgTable("api_tokens", {
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   /** The OAuth client that holds this token, if any. */
   clientId: text("client_id"),
+  /** "api" tokens are listed in Settings; "session" tokens are browser sign-ins. */
+  kind: text("kind", { enum: ["api", "session"] }).notNull().default("api"),
+});
+
+/** Links that let someone create an account in this workspace with a given role. */
+export const invites = pgTable("invites", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  /** sha256 of the code in the link; the code itself is shown once. */
+  codeHash: text("code_hash").notNull().unique(),
+  role: text("role", { enum: roles }).notNull(),
+  createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  uses: integer("uses").notNull().default(0),
+  createdAt: createdAt(),
 });
 
 export const visibilities = ["private", "workspace", "public"] as const;

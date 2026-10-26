@@ -174,5 +174,5 @@ export const SourceEditor = forwardRef<SourceEditorHandle, Props>(function Sourc
     v.dispatch({ effects: lint.current.reconfigure(linter(() => items, { delay: 0 })) });
   }, [props.diagnostics]);
 
-  return <div className="source" ref={host} />;
+  return <div className="source" ref={host} data-tour="source" />;
 });
