@@ -90,4 +90,10 @@ describe("present mode", () => {
     const slides = elemnt.toSlides(elemnt.parse("One\n\n---\n\nTwo"));
     expect(slides.map((s) => s.html)).toEqual(["<p>One</p>", "<p>Two</p>"]);
   });
+
+  it("starts a slide at a container that opens with a heading, and marks the cover", () => {
+    const slides = elemnt.toSlides(elemnt.parse("---\ntitle: Deck\n---\n\n## One\n\nText\n\n:::band{tone=glow}\n## Two\n\nMore\n:::"));
+    expect(slides.map((s) => s.title)).toEqual(["Deck", "One", "Two"]);
+    expect(slides.map((s) => s.cover ?? false)).toEqual([true, false, false]);
+  });
 });

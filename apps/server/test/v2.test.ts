@@ -149,10 +149,12 @@ describe("make me a component", () => {
 describe("present mode and LinkedIn", () => {
   it("renders the page as slides and as a carousel to print", async () => {
     const deck = await (await t.call("/s/pub/limits?view=present")).text();
-    expect(deck.match(/class="elemnt-slide"/g)).toHaveLength(3);
+    expect(deck.match(/class="elemnt-slide[ "]/g)).toHaveLength(3);
+    expect(deck).toContain("slide-stage");
     expect(deck).toContain("mountDeck");
     const carousel = await (await t.call("/s/pub/limits?view=carousel")).text();
     expect(carousel).toContain("size:1080px 1350px");
+    expect(carousel).toContain("fitSlides");
   });
 
   it("drafts a LinkedIn post with Claude", async () => {
