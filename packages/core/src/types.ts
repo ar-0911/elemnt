@@ -72,8 +72,8 @@ export interface ElemntComponent<P = Record<string, unknown>> {
   kinds: readonly DirectiveKind[];
   /** Validates and coerces directive attributes, e.g. `{type=warn}`. */
   props: z.ZodType<P>;
-  /** Structural checks beyond props. Return messages; each becomes an error diagnostic. */
-  validate?(node: DirectiveNode, props: P, ctx: ValidationContext): string[];
+  /** Structural checks beyond props. A string is an error; pass `{ severity: "warning" }` for advice. */
+  validate?(node: DirectiveNode, props: P, ctx: ValidationContext): (string | { severity: Severity; message: string })[];
   render(node: DirectiveNode, props: P, ctx: HtmlContext): ElementContent | ElementContent[];
   toMarkdown(node: DirectiveNode, props: P, ctx: MarkdownContext): MarkdownContent[];
   authoring: {

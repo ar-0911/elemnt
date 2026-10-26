@@ -17,6 +17,9 @@ function toTemplate(s: string): string {
 
 const insertable = builtinComponents.filter((c) => c.name !== "tab" && c.name !== "step");
 
+/** The workspace's saved components, and the "make one" action; set by the editor. */
+export const workspaceComponents: { items: { slug: string; name: string; description: string; snippet: string }[]; make?: () => void } = { items: [] };
+
 /** `/` at the start of a line opens the component menu. */
 function slashCommands(ctx: CompletionContext) {
   const word = ctx.matchBefore(/^\/[\w-]*$/m);
@@ -27,6 +30,22 @@ function slashCommands(ctx: CompletionContext) {
     type: "keyword",
     apply: snippet(toTemplate(c.authoring.snippet)),
   }));
+  for (const c of workspaceComponents.items) {
+    options.push({ label: `/${c.slug}`, detail: `${c.name}: ${c.description}`, type: "class", section: "Workspace components", apply: c.snippet });
+  }
+  if (workspaceComponents.make) {
+    const make = workspaceComponents.make;
+    options.push({
+      label: "/make-component",
+      detail: "Describe a widget and Claude builds it",
+      type: "function",
+      section: "Workspace components",
+      apply: (view, _c, from, to) => {
+        view.dispatch({ changes: { from, to, insert: "" } });
+        make();
+      },
+    });
+  }
   return { from: word.from, options, validFor: /^\/[\w-]*$/ };
 }
 

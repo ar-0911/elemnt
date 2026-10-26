@@ -6,6 +6,7 @@ import { pages, revisions, spaces, users, type Visibility } from "../db/schema.j
 import type { BlobStore } from "../lib/blobs.js";
 import { sha256 } from "../lib/crypto.js";
 import { newId } from "../lib/ids.js";
+import { storeWidgets, withWidgetFindings } from "./widgets.js";
 import { HttpError, InvalidSourceError } from "./errors.js";
 
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -43,11 +44,22 @@ async function store(blobs: BlobStore, body: string): Promise<string> {
  * Compiles source and stores all three bodies. Elemnt keeps the HTML and the
  * Markdown for every revision, so readers and agents never wait on a render.
  */
-async function compileAndStore({ blobs, elemnt }: PageDeps, source: string, options: { allowErrors?: boolean } = {}) {
-  const result = elemnt.compile(source);
+/** Compile plus the checks that need the server, such as the widget scan. */
+export function checkSource(deps: Pick<PageDeps, "elemnt">, source: string) {
+  return withWidgetFindings(deps.elemnt.compile(source));
+}
+
+async function compileAndStore(
+  deps: PageDeps,
+  source: string,
+  options: { allowErrors?: boolean; spaceId: string; pageId?: string; authorId: string },
+) {
+  const { blobs } = deps;
+  const { findings, ...result } = checkSource(deps, source);
   // Drafts may be mid-edit and broken; only publishing requires a clean page.
   if (!result.ok && !options.allowErrors) throw new InvalidSourceError(result.diagnostics);
   const [sourceHash, htmlHash, markdownHash] = await Promise.all([store(blobs, source), store(blobs, result.html), store(blobs, result.markdown)]);
+  await storeWidgets(deps.db, blobs, { spaceId: options.spaceId, ...(options.pageId ? { pageId: options.pageId } : {}), authorId: options.authorId, widgets: result.widgets, findings });
   return { result, sourceHash, htmlHash, markdownHash };
 }
 
@@ -100,8 +112,8 @@ export async function createPage(deps: PageDeps, input: { spaceId: string; path:
   const parent = parentPath ? await findPage(deps.db, input.spaceId, parentPath) : undefined;
   if (parentPath && !parent) throw new HttpError(400, `Create the parent page ${parentPath} first.`);
 
-  const { result, ...hashes } = await compileAndStore(deps, input.source, { allowErrors: input.draft });
   const pageId = newId("pg");
+  const { result, ...hashes } = await compileAndStore(deps, input.source, { allowErrors: input.draft, spaceId: input.spaceId, authorId: input.authorId });
   const revisionId = newId("rev");
   const title = result.frontmatter.title ?? path.split("/").pop()!;
   const summary = result.frontmatter.summary ?? null;
@@ -146,7 +158,7 @@ export async function updatePage(
   if (headRevisionId(page) !== input.baseRevisionId) throw new HttpError(409, STALE, { currentRevisionId: headRevisionId(page) });
 
   const publish = input.publish ?? true;
-  const { result, ...hashes } = await compileAndStore(deps, input.source, { allowErrors: !publish });
+  const { result, ...hashes } = await compileAndStore(deps, input.source, { allowErrors: !publish, spaceId: page.spaceId, pageId: page.id, authorId: input.authorId });
   const revisionId = newId("rev");
   const title = result.frontmatter.title ?? page.path.split("/").pop()!;
   const summary = result.frontmatter.summary ?? null;
@@ -168,7 +180,7 @@ export async function publishDraft(deps: PageDeps, input: { pageId: string; user
   const page = await getPage(deps.db, input.pageId);
   assertNotLockedByOther(page, input.userId);
   if (!page.draftRevisionId) throw new HttpError(400, "There is no draft to publish.");
-  const check = deps.elemnt.compile(await readRevision(deps, page.draftRevisionId, "source"));
+  const check = checkSource(deps, await readRevision(deps, page.draftRevisionId, "source"));
   if (!check.ok) throw new InvalidSourceError(check.diagnostics);
   const [rev] = await deps.db.select().from(revisions).where(eq(revisions.id, page.draftRevisionId));
   const markdown = await readRevision(deps, page.draftRevisionId, "markdown");

@@ -9,11 +9,31 @@ import type { BlobStore } from "./lib/blobs.js";
 import type { Config } from "./lib/config.js";
 import { SecretBox, safeEqual } from "./lib/crypto.js";
 import { contentSecurityPolicy, escapeHtml, renderShell, renderSimple } from "./render/page.js";
+import { renderDeck } from "./render/deck.js";
 import { HttpError } from "./services/errors.js";
 import * as linkedin from "./services/linkedin.js";
 import * as pagesSvc from "./services/pages.js";
 import * as commentsSvc from "./services/comments.js";
 import { searchPages } from "./services/search.js";
+import { anthropicProvider, assistPrompt, EDIT_SCHEMA, editorSystemPrompt, type AiProvider } from "./services/ai.js";
+import * as oauth from "./services/oauth.js";
+import * as suggestionsSvc from "./services/suggestions.js";
+import { handleMcp } from "./mcp.js";
+import { sandboxApp } from "./sandbox.js";
+import { editorApp } from "./web.js";
+import { querySourceService } from "./services/query.js";
+import * as widgetsSvc from "./services/widgets.js";
+import * as reposSvc from "./services/repos.js";
+import * as askSvc from "./services/ask.js";
+import * as levelsSvc from "./services/levels.js";
+import * as librarySvc from "./services/library.js";
+import * as insightsSvc from "./services/insights.js";
+import { githubClient, normalizeRepo, verifyWebhook } from "./services/github.js";
+import { widgetHash, sha256Hex } from "@elemnt/core";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { workspaces } from "./db/schema.js";
+import { eq } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
 import { getWorkspace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 
@@ -24,13 +44,28 @@ export interface AppDeps {
   elemnt?: Elemnt;
   /** Injected so tests can stand in for LinkedIn. */
   fetch?: typeof fetch;
+  /** Injected so tests can stand in for Claude. */
+  ai?: AiProvider;
+  /** The built editor (apps/web/dist), served at /app. */
+  webDir?: string;
+  /** Work that outlives a request (drift checks from webhooks). Tests collect it to await. */
+  background?(task: Promise<unknown>): void;
 }
+
+/** Reports one IP or user may file per hour, so the report button can't be used to flood admins. */
+const REPORTS_PER_HOUR = 10;
 
 type Env = { Variables: { viewer: Viewer | undefined; workspaceId: string; nonce: string } };
 type Space = typeof spaces.$inferSelect;
 
 const TOKEN_COOKIE = "elemnt_token";
 const LI_STATE_COOKIE = "elemnt_li_state";
+
+const LINKEDIN_SYSTEM = `You write LinkedIn posts that share a documentation page or project write-up. The author will edit your draft before posting.
+
+Shape: a one-line hook that names the problem or the surprising result (no clickbait, no "I'm excited to share"), a blank line, three short takeaways from the page as lines starting with "→ ", a blank line, one sentence on who should read it, then the link. Plain text only: no Markdown, no hashtags unless one is genuinely useful, at most one emoji. Under 1,200 characters. Use only facts from the page, in the author's first person.`;
+
+const BADGE = `<svg xmlns="http://www.w3.org/2000/svg" width="138" height="20" role="img" aria-label="Explained on Elemnt"><title>Explained on Elemnt</title><linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#bbb" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient><clipPath id="r"><rect width="138" height="20" rx="3" fill="#fff"/></clipPath><g clip-path="url(#r)"><rect width="75" height="20" fill="#555"/><rect x="75" width="63" height="20" fill="#2949c7"/><rect width="138" height="20" fill="url(#s)"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11"><text x="37.5" y="14">explained</text><text x="105.5" y="14">on Elemnt</text></g></svg>`;
 
 export function createApp(deps: AppDeps) {
   const elemnt = deps.elemnt ?? createElemnt();
@@ -41,6 +76,20 @@ export function createApp(deps: AppDeps) {
   let workspaceId: string | undefined;
 
   const app = new Hono<Env>();
+  const sandboxUrl = deps.config.sandboxUrl;
+  const queries = querySourceService(deps.db, box, doFetch);
+  const reportLog = new Map<string, number[]>();
+  const gh = githubClient(deps.config.github ?? {}, doFetch);
+  const background = deps.background ?? ((task: Promise<unknown>) => void task.catch((err) => console.error("background task failed", err)));
+
+  // The sandbox origin is the same server under another hostname. It answers
+  // only /w/*: nothing else, cookies included, is reachable from there.
+  if (sandboxUrl) {
+    const sandbox = sandboxApp({ db: deps.db, blobs: deps.blobs, publicUrl: deps.config.publicUrl });
+    const host = new URL(sandboxUrl).host;
+    app.use(async (c, next) => (new URL(c.req.url).host === host ? sandbox.fetch(c.req.raw) : next()));
+  }
+  if (deps.webDir) app.route("/app", editorApp(deps.webDir, sandboxUrl));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message, ...err.details }, err.status);
@@ -94,7 +143,7 @@ export function createApp(deps: AppDeps) {
   }
 
   function html(c: Context<Env>, body: string, status: 200 | 404 = 200) {
-    c.header("Content-Security-Policy", contentSecurityPolicy(c.get("nonce")));
+    c.header("Content-Security-Policy", contentSecurityPolicy(c.get("nonce"), sandboxUrl));
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
     return c.html(body, status);
@@ -140,13 +189,396 @@ export function createApp(deps: AppDeps) {
   app.get("/api/me", async (c) => {
     const viewer = requireRole(c, "viewer");
     const account = await linkedin.getAccount(deps.db, viewer.userId);
-    return c.json({ ...viewer, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
+    return c.json({ ...viewer, sandboxUrl: sandboxUrl ?? null, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
   });
 
   app.post("/api/preview", async (c) => {
     requireRole(c, "viewer");
     const { source } = z.object({ source: z.string().max(500_000) }).parse(await c.req.json());
     return c.json(elemnt.compile(source));
+  });
+
+  // ---------- v2: ask the page, reading levels, components, heatmap ----------
+
+  /** A published page the current visitor may read, for reader-side endpoints. */
+  async function readablePage(c: Context<Env>) {
+    const page = await pagesSvc.getPage(deps.db, c.req.param("id")!).catch(() => undefined);
+    const space = page && (await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.id, page.spaceId) }));
+    if (!page?.publishedRevisionId || !space || space.workspaceId !== c.get("workspaceId") || !canRead(c.get("viewer"), space)) throw new HttpError(404, "Not found.");
+    return { page, space };
+  }
+
+  const askLog = new Map<string, number[]>();
+  const signalLog = new Map<string, number[]>();
+  function limit(log: Map<string, number[]>, who: string, perHour: number, message: string) {
+    const now = Date.now();
+    const recent = (log.get(who) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= perHour) throw new HttpError(429, message);
+    log.set(who, [...recent, now]);
+  }
+  const visitor = (c: Context<Env>) => c.get("viewer")?.userId ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "anonymous";
+
+  async function askEnabled(c: Context<Env>, isPublicSpace: boolean) {
+    if (!(await aiKey(c.get("workspaceId")))) return false;
+    if (c.get("viewer")?.role) return true;
+    const [ws] = await deps.db.select({ askPublic: workspaces.askPublic }).from(workspaces).where(eq(workspaces.id, c.get("workspaceId")));
+    return isPublicSpace && Boolean(ws?.askPublic);
+  }
+
+  app.post("/api/pages/:id/ask", async (c) => {
+    const { page, space } = await readablePage(c);
+    if (!(await askEnabled(c, space.visibility === "public"))) throw new HttpError(403, "Ask the page isn't turned on here.");
+    limit(askLog, visitor(c), c.get("viewer")?.role ? 60 : 10, "You've asked a lot of questions. Try again in a while.");
+    const body = z.object({ question: z.string().trim().min(3).max(500), quote: z.string().trim().max(1000).optional(), source: z.string().max(64).optional() }).parse(await c.req.json());
+    const viewer = c.get("viewer");
+    const result = await askSvc.askPage(pageDeps, (await aiFor(c.get("workspaceId")))!, {
+      pageId: page.id,
+      question: body.question,
+      ...(body.quote ? { quote: body.quote } : {}),
+      source: body.source?.replace(/[^a-z0-9_.-]/gi, "") || "direct",
+      ...(viewer ? { askerId: viewer.userId } : {}),
+      spaceIds: await askSvc.groundingSpaces(deps, c.get("workspaceId"), space.id, Boolean(viewer?.role)),
+    });
+    return c.json(result);
+  });
+
+  app.get("/api/pages/:id/questions", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    return c.json(await askSvc.listQuestions(deps, page.id, c.req.query("status") === "all" ? "all" : "open"));
+  });
+
+  app.post("/api/pages/:id/questions/suggest", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const { ids } = z.object({ ids: z.array(z.string()).min(1).max(30) }).parse(await c.req.json());
+    return c.json(await askSvc.suggestFromQuestions(pageDeps, await aiClient(c), { pageId: page.id, ids, userId: viewer.userId }), 201);
+  });
+
+  app.post("/api/pages/:id/questions/resolve", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    const { ids } = z.object({ ids: z.array(z.string()).min(1).max(200) }).parse(await c.req.json());
+    await askSvc.resolveQuestions(deps, page.id, ids);
+    return c.json({ resolved: ids.length });
+  });
+
+  app.get("/api/settings/ask", async (c) => {
+    requireRole(c, "admin");
+    const [ws] = await deps.db.select({ askPublic: workspaces.askPublic }).from(workspaces).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json({ askPublic: Boolean(ws?.askPublic) });
+  });
+
+  app.put("/api/settings/ask", async (c) => {
+    requireRole(c, "admin");
+    const { askPublic } = z.object({ askPublic: z.boolean() }).parse(await c.req.json());
+    await deps.db.update(workspaces).set({ askPublic }).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json({ askPublic });
+  });
+
+  /** Reading signals from the reader (sendBeacon, so the body arrives as text). */
+  app.post("/api/pages/:id/signals", async (c) => {
+    const { page } = await readablePage(c);
+    limit(signalLog, visitor(c), 300, "Too many signals.");
+    let raw: unknown;
+    try {
+      raw = JSON.parse((await c.req.text()).slice(0, 20_000));
+    } catch {
+      throw new HttpError(400, "Send JSON.");
+    }
+    const body = z.object({ sections: z.record(z.string().max(90), z.number()), exit: z.string().max(90).nullable().optional(), source: z.string().max(64).optional() }).parse(raw);
+    await insightsSvc.recordSignals(deps.db, page.id, body);
+    return c.body(null, 204);
+  });
+
+  app.get("/api/pages/:id/insights", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    if (!page.publishedRevisionId) return c.json({ sections: [], questionsWithoutSection: 0, sources: [] });
+    const html = await pagesSvc.readRevision(deps, page.publishedRevisionId, "html");
+    const source = c.req.query("source");
+    return c.json(await insightsSvc.pageInsights(deps.db, { pageId: page.id, html, ...(source ? { source } : {}) }));
+  });
+
+  function levelParam(c: Context<Env>) {
+    const level = c.req.param("level") ?? "";
+    if (!levelsSvc.isLevel(level)) throw new HttpError(404, "Levels are newcomer, engineer and exec.");
+    return level;
+  }
+
+  app.get("/api/pages/:id/levels", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    return c.json(await levelsSvc.listLevels(deps, page.id));
+  });
+
+  app.get("/api/pages/:id/levels/:level", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    const level = await levelsSvc.getLevel(pageDeps, page.id, levelParam(c), true);
+    if (!level) throw new HttpError(404, "Not generated yet.");
+    return c.json(level);
+  });
+
+  app.post("/api/pages/:id/levels/:level/generate", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    return c.json(await levelsSvc.generateLevel(pageDeps, await aiClient(c), { pageId: page.id, level: levelParam(c), userId: viewer.userId }), 201);
+  });
+
+  app.put("/api/pages/:id/levels/:level", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const { source } = z.object({ source: z.string().min(1).max(500_000) }).parse(await c.req.json());
+    if (!page.publishedRevisionId) throw new HttpError(400, "Publish the page first.");
+    await levelsSvc.saveLevel(pageDeps, { pageId: page.id, level: levelParam(c), source, baseRevisionId: page.publishedRevisionId, userId: viewer.userId });
+    return c.json(await levelsSvc.getLevel(pageDeps, page.id, levelParam(c), true));
+  });
+
+  app.post("/api/pages/:id/levels/:level/approve", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    await levelsSvc.approveLevel(deps, page.id, levelParam(c), viewer.userId);
+    return c.json(await levelsSvc.listLevels(deps, page.id));
+  });
+
+  app.delete("/api/pages/:id/levels/:level", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    await levelsSvc.deleteLevel(deps, page.id, levelParam(c));
+    return c.body(null, 204);
+  });
+
+  const componentBody = z.object({
+    name: z.string().trim().min(1).max(100),
+    slug: z.string().trim().min(1).max(63),
+    description: z.string().trim().max(500),
+    summary: z.string().trim().min(10).max(1000),
+    html: z.string().max(100_000),
+    css: z.string().max(100_000),
+    js: z.string().max(100_000),
+    height: z.number().int().min(40).max(2000),
+  });
+
+  app.get("/api/components", async (c) => {
+    requireRole(c, "viewer");
+    const items = await librarySvc.listComponents(deps.db, c.get("workspaceId"));
+    return c.json(items.map((i) => ({ ...i, snippet: librarySvc.widgetSnippet(i) })));
+  });
+
+  /** Make me a component: Claude drafts it; it is registered for preview but not saved. */
+  app.post("/api/components/generate", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const { description } = z.object({ description: z.string().trim().min(5).max(2000) }).parse(await c.req.json());
+    const draft = await librarySvc.generateComponent(await aiClient(c), description);
+    const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
+    const code = { html: draft.html, css: draft.css, js: draft.js };
+    const hash = widgetHash(code);
+    if (space) await widgetsSvc.storeWidgets(deps.db, deps.blobs, { spaceId: space.id, authorId: viewer.userId, widgets: [{ hash, code, summary: draft.summary }], findings: new Map([[hash, draft.findings]]) });
+    return c.json({ ...draft, hash, snippet: librarySvc.widgetSnippet(draft) });
+  });
+
+  app.post("/api/components", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const draft = componentBody.parse(await c.req.json());
+    const row = await librarySvc.saveComponent(deps.db, { workspaceId: c.get("workspaceId"), userId: viewer.userId, draft });
+    return c.json({ ...row, snippet: librarySvc.widgetSnippet(row) }, 201);
+  });
+
+  app.delete("/api/components/:cid", async (c) => {
+    requireRole(c, "editor");
+    await librarySvc.deleteComponent(deps.db, c.get("workspaceId"), c.req.param("cid"));
+    return c.body(null, 204);
+  });
+
+  // ---------- repo explainers ----------
+
+  app.get("/api/pages/:id/repo", async (c) => {
+    const { page } = await pageWithAccess(c, "viewer");
+    return c.json({ link: (await reposSvc.getLink(deps, page.id)) ?? null });
+  });
+
+  app.put("/api/pages/:id/repo", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const body = z
+      .object({ repo: z.string().min(3).max(300), branch: z.string().max(200).optional(), commit: z.string().max(64).optional(), citedPaths: z.array(z.string().max(500)).max(200).optional() })
+      .parse(await c.req.json());
+    const link = await reposSvc.linkRepo(deps, gh, { pageId: page.id, repo: normalizeRepo(body.repo), userId: viewer.userId, ...(body.branch ? { branch: body.branch } : {}), ...(body.commit ? { commit: body.commit } : {}), ...(body.citedPaths ? { citedPaths: body.citedPaths } : {}) });
+    return c.json({ link, ...readmeSnippet(link.repo) });
+  });
+
+  app.delete("/api/pages/:id/repo", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    await reposSvc.unlinkRepo(deps, page.id);
+    return c.body(null, 204);
+  });
+
+  app.post("/api/pages/:id/repo/check", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    return c.json(await reposSvc.checkDrift(pageDeps, gh, page.id, await aiFor(c.get("workspaceId"))));
+  });
+
+  app.post("/api/pages/:id/repo/pin", async (c) => {
+    const { page } = await pageWithAccess(c, "editor");
+    const { commit } = z.object({ commit: z.string().regex(/^[0-9a-f]{7,40}$/i).optional() }).parse(await c.req.json().catch(() => ({})));
+    return c.json({ link: await reposSvc.pin(deps, page.id, commit) });
+  });
+
+  /** GitHub App push events: check every page linked to the pushed branch. Nothing is written to the repo. */
+  app.post("/integrations/github/webhook", async (c) => {
+    const secret = deps.config.github?.webhookSecret;
+    if (!secret) throw new HttpError(404, "Not found.");
+    const raw = await c.req.text();
+    if (!verifyWebhook(secret, raw, c.req.header("x-hub-signature-256"))) throw new HttpError(401, "Bad signature.");
+    if (c.req.header("x-github-event") !== "push") return c.json({ ignored: true });
+    const event = JSON.parse(raw) as { ref?: string; repository?: { full_name?: string } };
+    const repo = event.repository?.full_name?.toLowerCase();
+    const branch = event.ref?.replace(/^refs\/heads\//, "");
+    if (!repo || !branch) return c.json({ ignored: true });
+    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.branch === branch);
+    const workspaceId = c.get("workspaceId");
+    background(
+      (async () => {
+        const ai = await aiFor(workspaceId);
+        for (const p of linked) await reposSvc.checkDrift(pageDeps, gh, p.pageId, ai).catch((err) => console.error(`drift check failed for ${p.pageId}`, err));
+      })(),
+    );
+    return c.json({ checking: linked.length }, 202);
+  });
+
+  function readmeSnippet(repo: string) {
+    const short = `${deps.config.publicUrl}/r/${repo}`;
+    return { shortUrl: short, badge: `[![Explained on Elemnt](${short}/badge.svg)](${short})` };
+  }
+
+  /** The README link: elemnt/r/owner/repo goes to the repo's explainer page. */
+  app.get("/r/:owner/:name", async (c) => {
+    const repo = `${c.req.param("owner")}/${c.req.param("name")}`.toLowerCase();
+    const viewer = c.get("viewer");
+    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.published && (p.visibility === "public" || viewer?.role));
+    const best = linked.find((p) => p.visibility === "public") ?? linked[0];
+    if (!best) throw new HttpError(404, "No explainer page for this repo yet.");
+    return c.redirect(`/s/${best.spaceSlug}/${best.path}?utm_source=readme`, 302);
+  });
+
+  app.get("/r/:owner/:name/badge.svg", (c) => {
+    c.header("Content-Type", "image/svg+xml");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(BADGE);
+  });
+
+  // ---------- widgets (spec §7) ----------
+
+  /**
+   * The editor preview registers widgets as the author types so the sandbox
+   * can serve them. The server recomputes each hash and scans the code; code
+   * with error findings is stored but never served.
+   */
+  app.post("/api/widgets/preview", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const code = z.object({ html: z.string().max(200_000), css: z.string().max(200_000), js: z.string().max(200_000) });
+    const { widgets } = z.object({ widgets: z.array(code).max(20) }).parse(await c.req.json());
+    const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
+    if (!space) throw new HttpError(400, "Create a space first.");
+    const { verified } = await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"));
+    const out = widgets.map((w) => ({ hash: widgetHash(w), code: w, summary: "Preview", findings: widgetsSvc.scanWidget(w, { networkAllowed: verified }) }));
+    await widgetsSvc.storeWidgets(deps.db, deps.blobs, { spaceId: space.id, authorId: viewer.userId, widgets: out, findings: new Map(out.map((w) => [w.hash, w.findings])) });
+    return c.json({ widgets: out.map(({ hash, findings }) => ({ hash, findings })) });
+  });
+
+  app.post("/api/widgets/:hash/report", async (c) => {
+    const viewer = c.get("viewer");
+    const who = viewer?.userId ?? c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? "anonymous";
+    const now = Date.now();
+    const recent = (reportLog.get(who) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= REPORTS_PER_HOUR) throw new HttpError(429, "Too many reports. Try again later.");
+    reportLog.set(who, [...recent, now]);
+    const { reason, page } = z.object({ reason: z.string().trim().min(1).max(500), page: z.string().max(500).optional() }).parse(await c.req.json());
+    await widgetsSvc.reportWidget(deps.db, { hash: c.req.param("hash"), reason, ...(page ? { pageUrl: page } : {}), ...(viewer ? { reporterId: viewer.userId } : {}) });
+    return c.json({ reported: true });
+  });
+
+  app.get("/api/widgets/reports", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ reports: await widgetsSvc.listReports(deps.db, c.get("workspaceId")) });
+  });
+
+  app.post("/api/widgets/:hash/block", async (c) => {
+    const viewer = requireRole(c, "admin");
+    const { reason } = z.object({ reason: z.string().trim().min(1).max(200) }).parse(await c.req.json());
+    await widgetsSvc.blockWidget(deps.db, { hash: c.req.param("hash"), reason, userId: viewer.userId });
+    return c.json({ blocked: true });
+  });
+
+  app.delete("/api/widgets/:hash/block", async (c) => {
+    requireRole(c, "admin");
+    await widgetsSvc.unblockWidget(deps.db, c.req.param("hash"));
+    return c.body(null, 204);
+  });
+
+  app.get("/api/settings/widgets", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ ...(await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))), selfVerify: Boolean(deps.config.widgetSelfVerify), sandboxUrl: sandboxUrl ?? null });
+  });
+
+  app.put("/api/settings/widgets", async (c) => {
+    requireRole(c, "admin");
+    const host = z.string().trim().toLowerCase().regex(/^(?!-)[a-z0-9-]+(\.[a-z0-9-]+)+$/, "use a hostname such as api.example.com");
+    const body = z.object({ verified: z.boolean().optional(), hosts: z.array(host).max(20).optional() }).parse(await c.req.json());
+    if (body.verified !== undefined && !deps.config.widgetSelfVerify) throw new HttpError(403, "Verification is granted by the operator of this Elemnt server.");
+    await deps.db
+      .update(workspaces)
+      .set({ ...(body.verified !== undefined ? { widgetsVerified: body.verified } : {}), ...(body.hosts ? { widgetHosts: [...new Set(body.hosts)] } : {}) })
+      .where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json(await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId")));
+  });
+
+  // ---------- live data for :query ----------
+
+  app.get("/api/query", async (c) => {
+    const source = c.req.query("source") ?? "";
+    const key = c.req.query("key") ?? "";
+    if (!source || !key || key.length > 200) throw new HttpError(400, "Send source and key.");
+    c.header("Cache-Control", "private, max-age=30");
+    return c.json(await queries.value(c.get("workspaceId"), source, key, Boolean(c.get("viewer")?.role)));
+  });
+
+  app.get("/api/settings/query-sources", async (c) => {
+    requireRole(c, "admin");
+    return c.json({ sources: await queries.list(c.get("workspaceId")) });
+  });
+
+  app.put("/api/settings/query-sources/:slug", async (c) => {
+    requireRole(c, "admin");
+    const body = z
+      .object({ url: z.string().url().max(2000), public: z.boolean().default(false), headers: z.record(z.string().max(100), z.string().max(4000)).nullable().optional() })
+      .parse(await c.req.json());
+    await queries.save(c.get("workspaceId"), { slug: c.req.param("slug"), url: body.url, public: body.public, ...(body.headers !== undefined ? { headers: body.headers } : {}) });
+    return c.json({ sources: await queries.list(c.get("workspaceId")) });
+  });
+
+  app.delete("/api/settings/query-sources/:slug", async (c) => {
+    requireRole(c, "admin");
+    await queries.remove(c.get("workspaceId"), c.req.param("slug"));
+    return c.body(null, 204);
+  });
+
+  // ---------- reader runtime ----------
+
+  let bundle: Promise<{ js: string; map: string | undefined; etag: string } | undefined> | undefined;
+  const loadBundle = () =>
+    (bundle ??= (async () => {
+      try {
+        const path = createRequire(import.meta.url).resolve("@elemnt/elements/bundle");
+        const js = await readFile(path, "utf8");
+        const map = await readFile(`${path}.map`, "utf8").catch(() => undefined);
+        return { js, map, etag: `"${sha256Hex(js).slice(0, 16)}"` };
+      } catch {
+        console.warn("@elemnt/elements isn't built; run pnpm --filter @elemnt/elements build. Pages render without interactivity.");
+        return undefined;
+      }
+    })());
+
+  app.get("/assets/elements.js", async (c) => {
+    const b = await loadBundle();
+    if (!b) return c.text("// @elemnt/elements is not built\nexport function enhance() {}\n", 200, { "Content-Type": "text/javascript; charset=utf-8" });
+    if (c.req.header("if-none-match") === b.etag) return c.body(null, 304);
+    return c.body(b.js, 200, { "Content-Type": "text/javascript; charset=utf-8", ETag: b.etag, "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" });
+  });
+
+  app.get("/assets/elements.js.map", async (c) => {
+    const b = await loadBundle();
+    return b?.map ? c.body(b.map, 200, { "Content-Type": "application/json" }) : c.text("Not found.", 404);
   });
 
   app.get("/api/spaces", async (c) => {
@@ -177,9 +609,9 @@ export function createApp(deps: AppDeps) {
     return c.json({ ...result, url: pageUrl(space, pagesSvc.normalizePath(input.path)) }, 201);
   });
 
-  async function pageWithAccess(c: Context<Env>, role: "viewer" | "editor") {
+  async function pageWithAccess(c: Context<Env>, role: "viewer" | "editor", pageId = c.req.param("id")!) {
     const viewer = requireRole(c, role);
-    const page = await pagesSvc.getPage(deps.db, c.req.param("id")!);
+    const page = await pagesSvc.getPage(deps.db, pageId);
     const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.id, page.spaceId) });
     if (!space || space.workspaceId !== c.get("workspaceId")) throw new HttpError(404, "Page not found.");
     return { viewer, page, space };
@@ -341,7 +773,214 @@ export function createApp(deps: AppDeps) {
     return c.json(result, 201);
   });
 
+  /** Claude drafts the LinkedIn post (hook, three takeaways, link) for the author to edit. */
+  app.post("/api/pages/:id/linkedin/draft", async (c) => {
+    const { page, space } = await pageWithAccess(c, "editor");
+    if (!page.publishedRevisionId) throw new HttpError(400, "Publish the page first.");
+    const markdown = await pagesSvc.readRevision(deps, page.publishedRevisionId, "markdown");
+    const url = linkedin.trackedUrl(pageUrl(space, page.path), `${space.slug}/${page.path}`);
+    const out = await (await aiClient(c)).json<{ commentary: string }>({
+      system: LINKEDIN_SYSTEM,
+      prompt: `<page>\n${markdown.slice(0, 30_000)}\n</page>\n\nWrite the post. End with this link on its own line: ${url}`,
+      schema: { type: "object", properties: { commentary: { type: "string" } }, required: ["commentary"], additionalProperties: false },
+      effort: "low",
+      maxTokens: 4000,
+    });
+    return c.json({ commentary: out.commentary.slice(0, 3000) });
+  });
+
   // ---------- reader ----------
+
+
+  // ---------- AI: bring your own Anthropic key ----------
+
+  async function aiKey(workspaceId: string): Promise<{ key: string; source: "workspace" | "server"; hint: string } | undefined> {
+    const [ws] = await deps.db.select({ c: workspaces.aiKeyCiphertext, hint: workspaces.aiKeyHint }).from(workspaces).where(eq(workspaces.id, workspaceId));
+    if (ws?.c) return { key: box.open(ws.c), source: "workspace", hint: ws.hint ?? "" };
+    if (deps.config.anthropicApiKey) return { key: deps.config.anthropicApiKey, source: "server", hint: deps.config.anthropicApiKey.slice(-4) };
+    return undefined;
+  }
+
+  async function aiFor(workspaceId: string) {
+    const k = await aiKey(workspaceId);
+    return k ? (deps.ai ?? anthropicProvider)(k.key) : undefined;
+  }
+
+  async function aiClient(c: Context<Env>) {
+    const k = await aiKey(c.get("workspaceId"));
+    if (!k) throw new HttpError(400, "Claude isn't set up for this workspace yet. An admin can add an Anthropic API key in Settings.");
+    return (deps.ai ?? anthropicProvider)(k.key);
+  }
+
+  app.get("/api/ai", async (c) => {
+    requireRole(c, "editor");
+    const k = await aiKey(c.get("workspaceId"));
+    return c.json({ configured: Boolean(k), source: k?.source ?? null, hint: k ? `…${k.hint}` : null });
+  });
+
+  app.put("/api/ai/key", async (c) => {
+    requireRole(c, "admin");
+    const { apiKey } = z.object({ apiKey: z.string().trim().min(20).max(300) }).parse(await c.req.json());
+    await deps.db.update(workspaces).set({ aiKeyCiphertext: box.seal(apiKey), aiKeyHint: apiKey.slice(-4) }).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.json({ configured: true, source: "workspace", hint: `…${apiKey.slice(-4)}` });
+  });
+
+  app.delete("/api/ai/key", async (c) => {
+    requireRole(c, "admin");
+    await deps.db.update(workspaces).set({ aiKeyCiphertext: null, aiKeyHint: null }).where(eq(workspaces.id, c.get("workspaceId")));
+    return c.body(null, 204);
+  });
+
+  /**
+   * ⌘I in the editor. Claude rewrites the selection (or the page) and the result
+   * comes back as a suggestion to review, never as a direct edit.
+   */
+  app.post("/api/pages/:id/assist", async (c) => {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    const body = z
+      .object({
+        instruction: z.string().trim().min(1).max(2000),
+        baseRevisionId: z.string(),
+        selection: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional(),
+      })
+      .parse(await c.req.json());
+    const head = pagesSvc.headRevisionId(page);
+    if (head !== body.baseRevisionId) throw new HttpError(409, "Save your changes before asking Claude, so the suggestion lines up with them.", { currentRevisionId: head });
+    const source = await pagesSvc.readRevision(deps, head, "source");
+    const sel = body.selection && body.selection.to > body.selection.from && body.selection.to <= source.length ? body.selection : undefined;
+
+    const ai = await aiClient(c);
+    const out = await ai.json<{ replacement: string; summary: string }>({
+      system: editorSystemPrompt(elemnt.authoringGuide()),
+      prompt: assistPrompt({ source, instruction: body.instruction, ...(sel ? { selection: sel } : {}) }),
+      schema: EDIT_SCHEMA,
+    });
+    const proposed = sel ? source.slice(0, sel.from) + out.replacement + source.slice(sel.to) : out.replacement;
+    const created = await suggestionsSvc.createSuggestion(pageDeps, { pageId: page.id, baseRevisionId: head, proposed, origin: "assist", authorId: viewer.userId, summary: out.summary });
+    return c.json({ ...created, ...(await suggestionsSvc.getSuggestion(pageDeps, created.id)) }, 201);
+  });
+
+  // ---------- suggestions ----------
+
+  async function suggestionWithAccess(c: Context<Env>, role: "viewer" | "editor") {
+    const s = await deps.db.query.suggestions.findFirst({ where: (t, { eq }) => eq(t.id, c.req.param("sid")!) });
+    if (!s) throw new HttpError(404, "Suggestion not found.");
+    return { ...(await pageWithAccess(c, role, s.pageId)), suggestion: s };
+  }
+
+  app.get("/api/pages/:id/suggestions", async (c) => {
+    const { page } = await pageWithAccess(c, "viewer");
+    return c.json(await suggestionsSvc.listSuggestions(deps, page.id, c.req.query("status") === "all" ? "all" : "open"));
+  });
+
+  app.get("/api/suggestions/:sid", async (c) => {
+    const { suggestion } = await suggestionWithAccess(c, "viewer");
+    return c.json(await suggestionsSvc.getSuggestion(pageDeps, suggestion.id));
+  });
+
+  app.post("/api/suggestions/:sid/accept", async (c) => {
+    const { viewer, suggestion } = await suggestionWithAccess(c, "editor");
+    const { hunks } = z.object({ hunks: z.array(z.number().int().min(0)).optional() }).parse(await c.req.json().catch(() => ({})));
+    const result = await suggestionsSvc.acceptSuggestion(pageDeps, { id: suggestion.id, userId: viewer.userId, ...(hunks ? { hunks } : {}) });
+    // Accepting a drift suggestion brings the explainer up to the commit it was written for.
+    if (suggestion.origin === "drift" && (await reposSvc.getLink(deps, suggestion.pageId))) await reposSvc.pin(deps, suggestion.pageId);
+    return c.json(result);
+  });
+
+  app.post("/api/suggestions/:sid/reject", async (c) => {
+    const { viewer, suggestion } = await suggestionWithAccess(c, "editor");
+    await suggestionsSvc.rejectSuggestion(deps, { id: suggestion.id, userId: viewer.userId });
+    return c.body(null, 204);
+  });
+
+  // ---------- MCP and its OAuth ----------
+
+  const oauthMeta = oauth.metadata(deps.config.publicUrl);
+  app.get("/.well-known/oauth-authorization-server", (c) => c.json(oauthMeta.authorizationServer));
+  app.get("/.well-known/oauth-protected-resource", (c) => c.json(oauthMeta.protectedResource));
+  app.get("/.well-known/oauth-protected-resource/mcp", (c) => c.json(oauthMeta.protectedResource));
+
+  function oauthFail(c: Context<Env>, err: unknown) {
+    if (err instanceof oauth.OAuthError) return c.json({ error: err.code, error_description: err.message }, 400);
+    throw err;
+  }
+
+  app.post("/oauth/register", async (c) => {
+    try {
+      return c.json(await oauth.registerClient(deps.db, await c.req.json()), 201);
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+  });
+
+  app.get("/oauth/authorize", async (c) => {
+    let checked;
+    try {
+      checked = await oauth.checkAuthorize(deps.db, c.req.query());
+    } catch (err) {
+      // Never redirect to an unverified redirect_uri; show the problem instead.
+      const msg = err instanceof oauth.OAuthError ? err.message : "Invalid request.";
+      return html(c, renderSimple(c.get("nonce"), "Can't connect · Elemnt", `<h1>Can't connect</h1><p>${escapeHtml(msg)}</p>`));
+    }
+    const viewer = c.get("viewer");
+    if (!viewer?.role) return c.redirect(`/login?next=${encodeURIComponent(c.req.url.slice(c.req.url.indexOf("/oauth/")))}`);
+    const p = checked.params;
+    const hidden = Object.entries({ client_id: p.clientId, redirect_uri: p.redirectUri, code_challenge: p.codeChallenge, code_challenge_method: "S256", response_type: "code", state: p.state ?? "" })
+      .map(([k, v]) => `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`)
+      .join("");
+    const canWrite = hasRole(viewer, "editor");
+    return html(
+      c,
+      renderSimple(
+        c.get("nonce"),
+        "Connect · Elemnt",
+        `<h1>Connect ${escapeHtml(checked.clientName)} to Elemnt?</h1>
+<p>It will act as <strong>${escapeHtml(viewer.email)}</strong> and can search and read this workspace's docs${canWrite ? ", create drafts, suggest edits and comment. Nothing it writes is published until a person reviews it" : " and comment"}.</p>
+<p>Access lasts 30 days. It returns to <code>${escapeHtml(new URL(p.redirectUri).origin)}</code>.</p>
+<form method="post" action="/oauth/authorize">${hidden}<p><button class="btn" type="submit" name="decision" value="allow">Allow</button> <button class="btn" type="submit" name="decision" value="deny">Cancel</button></p></form>`,
+      ),
+    );
+  });
+
+  app.post("/oauth/authorize", async (c) => {
+    const viewer = c.get("viewer");
+    if (!viewer?.role) throw new HttpError(401, "Sign in first.");
+    const form = Object.fromEntries(Object.entries(await c.req.parseBody()).map(([k, v]) => [k, typeof v === "string" ? v : undefined]));
+    let checked;
+    try {
+      checked = await oauth.checkAuthorize(deps.db, form);
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+    const back = new URL(checked.params.redirectUri);
+    if (checked.params.state) back.searchParams.set("state", checked.params.state);
+    if (form.decision !== "allow") {
+      back.searchParams.set("error", "access_denied");
+      return c.redirect(back.toString());
+    }
+    back.searchParams.set("code", await oauth.issueCode(deps.db, checked.params, viewer.userId));
+    back.searchParams.set("iss", deps.config.publicUrl);
+    return c.redirect(back.toString());
+  });
+
+  app.post("/oauth/token", async (c) => {
+    const form = Object.fromEntries(Object.entries(await c.req.parseBody()).map(([k, v]) => [k, typeof v === "string" ? v : undefined]));
+    try {
+      c.header("Cache-Control", "no-store");
+      return c.json(await oauth.exchangeCode(deps.db, form));
+    } catch (err) {
+      return oauthFail(c, err);
+    }
+  });
+
+  app.all("/mcp", async (c) => {
+    const viewer = c.get("viewer");
+    if (!viewer?.role) {
+      c.header("WWW-Authenticate", `Bearer resource_metadata="${deps.config.publicUrl}/.well-known/oauth-protected-resource"`);
+      return c.json({ error: "Connect with OAuth or send an Elemnt API token." }, 401);
+    }
+    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh }, { viewer, workspaceId: c.get("workspaceId") });
+  });
 
   app.get("/", async (c) => {
     const viewer = c.get("viewer");
@@ -401,17 +1040,33 @@ export function createApp(deps: AppDeps) {
     if (!page?.publishedRevisionId) throw new HttpError(404, "Not found.");
 
     const url = new URL(c.req.url);
-    const view = asMarkdownFile || wantsMarkdown(c) ? "file" : url.searchParams.get("view") === "markdown" ? "markdown" : "page";
+    const requested = url.searchParams.get("view");
+    const view = asMarkdownFile || wantsMarkdown(c) ? "file" : requested === "markdown" ? "markdown" : "page";
     await recordView(deps.db, { pageId: page.id, format: view === "page" ? "html" : "markdown", url, referrer: c.req.header("referer") }).catch((err) =>
       console.error("recordView failed", err),
     );
 
-    if (view === "file") return markdown(c, await pagesSvc.readRevision(deps, page.publishedRevisionId, "markdown"));
+    // Reading levels: an approved rewrite for another audience, chosen with ?level=.
+    const levelName = url.searchParams.get("level") ?? "";
+    const level = levelsSvc.isLevel(levelName) ? await levelsSvc.getLevel(pageDeps, page.id, levelName, false) : undefined;
+    if (view === "file") return markdown(c, level?.markdown ?? (await pagesSvc.readRevision(deps, page.publishedRevisionId, "markdown")));
 
     const canonical = pageUrl(space, path);
     const isPublic = space.visibility === "public";
     const viewer = c.get("viewer");
-    const body = await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
+
+    if (requested === "present" || requested === "carousel") {
+      const source = level?.source ?? (await pagesSvc.readRevision(deps, page.publishedRevisionId, "source"));
+      const slides = await Promise.all(elemnt.toSlides(elemnt.parse(source)).map(async (sl) => ({ ...sl, html: await widgetsSvc.decorateWidgets(deps.db, sl.html) })));
+      return html(c, renderDeck({ nonce: c.get("nonce"), title: page.title, canonicalUrl: canonical, slides, mode: requested, ...(sandboxUrl ? { sandboxUrl } : {}) }));
+    }
+
+    const stored = level ? (view === "page" ? level.html : level.markdown) : await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
+    const body = view === "page" ? await widgetsSvc.decorateWidgets(deps.db, stored) : stored;
+    // Members and verified workspaces run widgets at once; other public readers click to run.
+    const repoLink = await reposSvc.getLink(deps, page.id);
+    const autorun = Boolean(viewer?.role) || !isPublic || (await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))).verified;
+    const levels = await levelsSvc.approvedLevels(deps, page.id);
     return html(
       c,
       renderShell({
@@ -423,6 +1078,13 @@ export function createApp(deps: AppDeps) {
         space,
         view,
         body,
+        ...(sandboxUrl ? { sandboxUrl } : {}),
+        autorun,
+        ...(repoLink ? { repo: repoLink } : {}),
+        pageId: page.id,
+        ask: await askEnabled(c, isPublic),
+        levels,
+        ...(level ? { level: level.level } : {}),
         ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic
           ? {

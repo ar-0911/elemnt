@@ -1,10 +1,12 @@
-import type { Diagnostic } from "@elemnt/core";
+import type { Diagnostic, WidgetCode } from "@elemnt/core";
 import { useEffect, useRef, useState } from "react";
 
 export interface Compiled {
   html: string;
   markdown: string;
   diagnostics: Diagnostic[];
+  /** Code of every valid widget, for the preview to register with the sandbox. */
+  widgets: WidgetCode[];
 }
 
 /** Compiles in a Web Worker so typing never waits on the parser. Only the latest result is kept. */

@@ -100,8 +100,9 @@ export function parseDocument(source: string, registry: ReadonlyMap<string, AnyC
     const parentDirective = parent && isDirective(parent) ? parent : undefined;
     const problems =
       component.validate?.(node, parsed.data, { parent: parentDirective, children: meaningfulChildren(splitDirective(node).content) }) ?? [];
-    for (const message of problems) {
-      diagnostics.push({ severity: "error", message, component: node.name, ...at(node) });
+    for (const p of problems) {
+      const { severity, message } = typeof p === "string" ? { severity: "error" as const, message: p } : p;
+      diagnostics.push({ severity, message, component: node.name, ...at(node) });
     }
 
     const data: ElemntNodeData = { props: parsed.data };

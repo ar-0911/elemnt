@@ -18,13 +18,15 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      "@elemnt/core/expr": fileURLToPath(new URL("../../packages/core/src/expr.ts", import.meta.url)),
       "@elemnt/core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
+      "@elemnt/elements": fileURLToPath(new URL("../../packages/elements/src/index.ts", import.meta.url)),
       "decode-named-character-reference": decodeEntity,
     },
   },
   worker: { format: "es" },
   server: {
     port: 5173,
-    proxy: { "/api": "http://localhost:8787", "/s": "http://localhost:8787", "/login": "http://localhost:8787", "/integrations": "http://localhost:8787" },
+    proxy: { "/api": "http://localhost:8787", "/s": "http://localhost:8787", "/login": "http://localhost:8787", "/integrations": "http://localhost:8787", "/assets": "http://localhost:8787" },
   },
 });
