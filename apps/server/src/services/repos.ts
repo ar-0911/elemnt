@@ -17,7 +17,13 @@ const MAX_DIFF = 60_000;
 export function citedInSource(source: string, repo: string): string[] {
   const esc = repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`github\\.com/${esc}/(?:blob|tree)/[^/\\s)]+/([^\\s)#?"'\\]]+)`, "gi");
-  return [...new Set([...source.matchAll(re)].map((m) => decodeURIComponent(m[1]!)))];
+  const linked = [...source.matchAll(re)].map((m) => decodeURIComponent(m[1]!));
+  // ::snippet and ::filetree name their repo and path as attributes.
+  const directives = [...source.matchAll(/::(?:snippet|filetree)(?:\[[^\]]*\])?\{([^}]*)\}/g)].flatMap((m) => {
+    const attrs = Object.fromEntries([...m[1]!.matchAll(/([a-z]+)="([^"]*)"/g)].map((a) => [a[1]!, a[2]!]));
+    return attrs.repo?.toLowerCase() === repo && attrs.path ? [attrs.path.replace(/^\/+/, "")] : [];
+  });
+  return [...new Set([...linked, ...directives])];
 }
 
 /** A changed file matters if it is a cited path or sits under a cited folder. Nothing cited means everything matters. */
@@ -149,7 +155,7 @@ export async function checkDrift(deps: PageDeps, gh: GitHubClient, pageId: strin
 /** Pages linked to a repo, for push webhooks, /r/owner/repo and agent search. */
 export async function pagesForRepo(deps: Pick<PageDeps, "db">, repo: string) {
   return deps.db
-    .select({ pageId: repoLinks.pageId, branch: repoLinks.branch, path: pages.path, title: pages.title, published: pages.publishedRevisionId, spaceSlug: spaces.slug, visibility: spaces.visibility })
+    .select({ pageId: repoLinks.pageId, branch: repoLinks.branch, path: pages.path, title: pages.title, summary: pages.summary, published: pages.publishedRevisionId, spaceSlug: spaces.slug, visibility: spaces.visibility })
     .from(repoLinks)
     .innerJoin(pages, eq(pages.id, repoLinks.pageId))
     .innerJoin(spaces, eq(spaces.id, pages.spaceId))

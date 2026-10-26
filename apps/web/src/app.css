@@ -30,6 +30,13 @@ code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px
 .seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--soft); }
 .seg button { border: 0; background: transparent; height: 28px; padding: 0 12px; border-radius: 6px; cursor: pointer; color: var(--muted); font-weight: 600; font-size: 12.5px; }
 .seg button:hover { color: var(--fg); }
+.seg-wide { display: flex; } .seg-wide button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; }
+.progress-note { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.progress-note > div { display: grid; gap: 2px; }
+.spinner { flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tile-feature { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: linear-gradient(135deg, var(--surface), color-mix(in srgb, var(--accent) 7%, var(--surface))); }
+.tile-feature svg { color: var(--accent); }
 .seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-sm); }
 .seg.small button { height: 24px; padding: 0 10px; font-size: 12px; }
 .pill { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: var(--muted); font: 600 11px system-ui; font-style: normal; text-transform: capitalize; vertical-align: 1px; }
@@ -324,3 +331,4 @@ a.tile:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
 .swatch[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--soft); }
 .swatch i { width: 26px; height: 16px; border-radius: 4px; }
 .style-sample { max-height: 360px; border: 1px solid var(--line); border-radius: 8px; padding: 12px 20px 24px; }
+.readme-card-preview { display: block; width: 100%; height: auto; margin: 4px 0 8px; border-radius: 10px; }

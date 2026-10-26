@@ -66,7 +66,7 @@ Agents still get plain Markdown: a hero becomes a heading and a paragraph, cards
 
 ## What you can do with it
 
-- **A rich explainer for any repo.** One page per project, linked from the README with a badge and kept current by the drift check. It has an architecture diagram, a quickstart, a tour of the code and a live demo. Claude Code writes it with the bundled `repo-explainer` skill.
+- **A rich explainer for any repo, instead of a plain README.** Paste a GitHub URL (or run `npx elemnt explain` in the repo) and Claude reads the code and drafts one interactive page: what it is, an architecture diagram, a quickstart, and a tour of the code with a live file tree and code snippets pinned to a commit. Your README gets a card that links to it. On every push, the GitHub App or [Action](integrations/github-action/README.md) checks the files the page covers and suggests updates. The page lives in Elemnt; only the card goes in the repo.
 - **Team docs that replace a wiki.** Spaces (private, workspace or public), a page tree, full-text search, comments anchored to quotes, and version history with restore.
 - **"Generate docs" from Claude Code.** Say "document the billing service". Claude reads the code, writes the page, validates it and gives you the review link.
 - **Runbooks Claude can run.** People read `::::runbook` steps as a normal page. Agents get them as structured steps with approval gates and expected output.

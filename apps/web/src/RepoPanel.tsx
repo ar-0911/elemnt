@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "./api";
+import { CopyButton } from "./ui";
 
 interface RepoLink {
   repo: string;
@@ -69,6 +70,7 @@ export function RepoPanel({ pageId, canEdit, onSuggested }: { pageId: string; ca
   if (link === undefined) return <section className="panel" aria-label="Repo" />;
   const shortUrl = link ? `${location.origin}/r/${link.repo}` : "";
   const badge = `[![Explained on Elemnt](${shortUrl}/badge.svg)](${shortUrl})`;
+  const card = `<a href="${shortUrl}">\n  <picture>\n    <source media="(prefers-color-scheme: dark)" srcset="${shortUrl}/card.svg?theme=dark">\n    <img alt="${link?.repo ?? ""}, explained on Elemnt" src="${shortUrl}/card.svg">\n  </picture>\n</a>`;
 
   return (
     <section className="panel repo-panel" aria-label="Repo">
@@ -100,11 +102,18 @@ export function RepoPanel({ pageId, canEdit, onSuggested }: { pageId: string; ca
             </p>
           )}
           {note && <p className="hint">{note}</p>}
-          <h4>README badge</h4>
+          <h4>README card</h4>
+          <p className="hint">Put this near the top of your README. It shows this page's title and summary once it's published, and links here.</p>
+          <img className="readme-card-preview" src={`${shortUrl}/card.svg`} alt="" />
+          <pre className="badge-snippet">{card}</pre>
+          <CopyButton text={card} label="Copy card" />
+          <h4>Or a small badge</h4>
           <pre className="badge-snippet">{badge}</pre>
-          <button type="button" className="btn ghost" onClick={() => void navigator.clipboard.writeText(badge)}>
-            Copy
-          </button>
+          <CopyButton text={badge} label="Copy badge" />
+          <h4>Keep it in sync</h4>
+          <p className="hint">
+            Install the Elemnt GitHub App on the repo, or add the <a href="https://github.com/ar-0911/elemnt/tree/main/integrations/github-action" target="_blank" rel="noreferrer">GitHub Action</a>. Either way, every push checks the files this page covers and suggests edits here.
+          </p>
         </>
       ) : canEdit ? (
         <form

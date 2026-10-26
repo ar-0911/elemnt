@@ -74,7 +74,10 @@ open http://localhost:8787/s/docs/hello
 | `GET`/`PUT`/`DELETE /api/pages/:id/repo` | Explainer pages: link a page to a GitHub repo `{repo, branch?, commit?, citedPaths?}`; returns the README badge |
 | `POST /api/pages/:id/repo/check`, `POST …/repo/pin` | Run the drift check now; mark the page current at a commit |
 | `POST /integrations/github/webhook` | GitHub push events (signed with `GITHUB_WEBHOOK_SECRET`) trigger drift checks for pages on that branch |
-| `GET /r/:owner/:repo`, `…/badge.svg` | The README short link to a repo's explainer page, and its badge |
+| `GET /r/:owner/:repo`, `…/badge.svg`, `…/card.svg?theme=dark` | The README short link to a repo's explainer page, its badge, and the README card (title and summary of the published explainer) |
+| `POST /api/explain` `{repo, space, path?}`, `GET /api/explain/:id` | Editors: Claude reads a GitHub repo and drafts an explainer page linked to it. Runs as a job; poll for `{status, result}` |
+| `POST /api/repos/:owner/:repo/sync` `{branch?}` | Editors: drift-check every page linked to the repo, as a push webhook would. Used by the GitHub Action |
+| `GET /api/github/:owner/:repo`, `…/tree?ref`, `…/file?ref&path` | Repo facts, file tree and file text for `::repo`, `::filetree` and `::snippet`. Private repos answer only to members, and only when a page here is linked to the repo |
 | `GET`/`PUT /api/settings/theme` | The organization theme `{theme}` (admins write; `null` removes it) |
 | `GET`/`PUT /api/me/style` | Your own default page style `{style}` |
 | `POST /mcp` tools `get_style_guide`, `save_my_style` | The style guide Claude reads before writing, and saving the style the user picked |
@@ -84,7 +87,9 @@ open http://localhost:8787/s/docs/hello
 
 ## Repo explainers and the drift check
 
-A page can be linked to a GitHub repo at a pinned commit. The page then shows "written against `a1b2c3d`, N commits behind". The check compares the pinned commit with the branch head. If a file the page cites has changed (cited means listed in `citedPaths` or linked from the page as `github.com/owner/repo/blob/...`), the check does one of two things:
+An explainer is one rich page that replaces a plain README as a project's front door. Make one from a repo URL in the editor (**New page → Explain a GitHub repo**), with `npx elemnt explain` in the repo, or from Claude Code with the `repo-explainer` skill. Claude reads the README, manifests, entry points and main modules at the branch head, writes the page with live `::repo`, `::filetree` and `::snippet` components, and saves it as a draft linked to that commit.
+
+A page can be linked to a GitHub repo at a pinned commit. The page then shows "written against `a1b2c3d`, N commits behind". The check compares the pinned commit with the branch head. If a file the page cites has changed (cited means listed in `citedPaths`, linked from the page as `github.com/owner/repo/blob/...`, or shown with `::snippet` or `::filetree`), the check does one of two things:
 
 - With a Claude key: Claude writes an updated page from the diffs, and it opens as a suggestion.
 - Without a key: a comment lists the changed files.
@@ -95,7 +100,11 @@ GitHub access, in order of preference:
 
 1. A GitHub App with read-only Contents and Metadata, subscribed to push events: set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` and `GITHUB_WEBHOOK_SECRET`, and point the webhook at `/integrations/github/webhook`.
 2. A `GITHUB_TOKEN`.
-3. Nothing, for public repos, with GitHub's low anonymous rate limit. Without the App there are no push events, so run checks from the editor's Repo panel or `POST /api/pages/:id/repo/check`.
+3. Nothing, for public repos, with GitHub's low anonymous rate limit.
+
+Without the App there are no push events. Add the [GitHub Action](../../integrations/github-action/README.md) to the repo instead (it calls `/api/repos/:owner/:repo/sync` with an editor's token), run `npx elemnt sync`, or check from the editor's Repo panel.
+
+To create the App: GitHub → Settings → Developer settings → GitHub Apps → New. Set the webhook URL to `https://YOUR-ELEMNT/integrations/github/webhook` with a secret, give it read-only **Contents** and **Metadata**, subscribe to **Push**, then generate a private key. Set `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` (newlines may be written as `\n`) and `GITHUB_WEBHOOK_SECRET`, and install the App on the repos you explain.
 
 ## Page styles and themes
 

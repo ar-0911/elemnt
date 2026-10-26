@@ -1,0 +1,34 @@
+name: Elemnt explainer sync
+description: Keep your Elemnt explainer page in step with your code. On each push, Elemnt compares the files the page cites and opens a suggested edit when they change.
+branding:
+  icon: book-open
+  color: blue
+inputs:
+  server:
+    description: Your Elemnt server, e.g. https://docs.example.com
+    required: true
+  token:
+    description: An Elemnt API token from an editor (Settings → Account → API tokens). Store it as a repository secret.
+    required: true
+  branch:
+    description: The branch to check. Defaults to the branch that was pushed.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Ask Elemnt to check linked pages
+      shell: bash
+      env:
+        ELEMNT_SERVER: ${{ inputs.server }}
+        ELEMNT_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.branch || github.ref_name }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        body=$(printf '{"branch":"%s"}' "$BRANCH")
+        out=$(curl -sS --fail-with-body -X POST "${ELEMNT_SERVER%/}/api/repos/${REPO}/sync" \
+          -H "Authorization: Bearer ${ELEMNT_TOKEN}" -H "Content-Type: application/json" -d "$body")
+        echo "$out"
+        echo "### Elemnt" >> "$GITHUB_STEP_SUMMARY"
+        echo "Checking explainer pages for \`${REPO}@${BRANCH}\`. Any changes show up as suggestions in Elemnt." >> "$GITHUB_STEP_SUMMARY"

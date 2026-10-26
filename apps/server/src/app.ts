@@ -29,7 +29,10 @@ import * as levelsSvc from "./services/levels.js";
 import * as librarySvc from "./services/library.js";
 import * as insightsSvc from "./services/insights.js";
 import * as themeSvc from "./services/theme.js";
-import { githubClient, normalizeRepo, verifyWebhook } from "./services/github.js";
+import { githubClient, normalizeRepo, verifyWebhook, type RepoInfo } from "./services/github.js";
+import * as explainSvc from "./services/explain.js";
+import { readmeCard } from "./render/card.js";
+import { randomUUID } from "node:crypto";
 import { widgetHash, sha256Hex } from "@elemnt/core";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -606,7 +609,8 @@ export function createApp(deps: AppDeps) {
 
   function readmeSnippet(repo: string) {
     const short = `${deps.config.publicUrl}/r/${repo}`;
-    return { shortUrl: short, badge: `[![Explained on Elemnt](${short}/badge.svg)](${short})` };
+    const card = `<a href="${short}">\n  <picture>\n    <source media="(prefers-color-scheme: dark)" srcset="${short}/card.svg?theme=dark">\n    <img alt="${repo}, explained on Elemnt" src="${short}/card.svg">\n  </picture>\n</a>`;
+    return { shortUrl: short, badge: `[![Explained on Elemnt](${short}/badge.svg)](${short})`, card };
   }
 
   /** The README link: elemnt/r/owner/repo goes to the repo's explainer page. */
@@ -623,6 +627,127 @@ export function createApp(deps: AppDeps) {
     c.header("Content-Type", "image/svg+xml");
     c.header("Cache-Control", "public, max-age=86400");
     return c.body(BADGE);
+  });
+
+  /** The README card: the explainer's title and summary as an image GitHub can show. */
+  app.get("/r/:owner/:name/card.svg", async (c) => {
+    const repo = `${c.req.param("owner")}/${c.req.param("name")}`.toLowerCase();
+    const best = (await reposSvc.pagesForRepo(deps, repo)).find((p) => p.published && p.visibility === "public");
+    c.header("Content-Type", "image/svg+xml");
+    c.header("Cache-Control", "public, max-age=3600");
+    const theme = c.req.query("theme") === "dark" ? "dark" : "light";
+    return c.body(readmeCard({ repo, theme, ...(best ? { title: best.title, summary: best.summary } : {}) }));
+  });
+
+  // ---------- GitHub data for ::repo, ::filetree and ::snippet ----------
+
+  /**
+   * Readers' browsers ask Elemnt, which asks GitHub with the server's
+   * credentials. So nobody can use this to read a private repo the server
+   * happens to reach: private repos answer only for workspace members, and
+   * only when a page in this workspace is linked to that repo.
+   */
+  const ghCache = new Map<string, { at: number; value: unknown }>();
+  const ghLog = new Map<string, number[]>();
+  async function cached<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
+    const hit = ghCache.get(key);
+    if (hit && Date.now() - hit.at < ttlMs) return hit.value as T;
+    const value = await load();
+    if (ghCache.size > 1000) ghCache.delete(ghCache.keys().next().value!);
+    ghCache.set(key, { at: Date.now(), value });
+    return value;
+  }
+  const isSha = (ref: string) => /^[0-9a-f]{40}$/i.test(ref);
+  async function readableRepo(c: Context<Env>): Promise<{ repo: string; info: RepoInfo }> {
+    const repo = normalizeRepo(`${c.req.param("owner")}/${c.req.param("name")}`);
+    limit(ghLog, visitor(c), 600, "Too many GitHub lookups. Try again later.");
+    const info = await cached(`info:${repo}`, 10 * 60_000, () => gh.info(repo));
+    if (info.private) {
+      const linked = c.get("viewer")?.role ? (await reposSvc.pagesForRepo(deps, repo)).length > 0 : false;
+      if (!linked) throw new HttpError(404, "GitHub couldn't find that repo.");
+    }
+    c.header("Cache-Control", info.private ? "private, max-age=300" : "public, max-age=300");
+    return { repo, info };
+  }
+
+  app.get("/api/github/:owner/:name", async (c) => c.json((await readableRepo(c)).info));
+
+  app.get("/api/github/:owner/:name/tree", async (c) => {
+    const { repo, info } = await readableRepo(c);
+    const ref = c.req.query("ref") && c.req.query("ref") !== "HEAD" ? c.req.query("ref")! : info.defaultBranch;
+    if (!/^[A-Za-z0-9_./-]{1,200}$/.test(ref)) throw new HttpError(400, "Bad ref.");
+    const t = await cached(`tree:${repo}:${ref}`, isSha(ref) ? 24 * 3_600_000 : 5 * 60_000, () => gh.tree(repo, ref));
+    return c.json({ ref, truncated: t.truncated || t.entries.length > 5000, entries: t.entries.slice(0, 5000).map(({ path, type }) => ({ path, type })) });
+  });
+
+  app.get("/api/github/:owner/:name/file", async (c) => {
+    const { repo, info } = await readableRepo(c);
+    const ref = c.req.query("ref") && c.req.query("ref") !== "HEAD" ? c.req.query("ref")! : info.defaultBranch;
+    const path = c.req.query("path") ?? "";
+    if (!/^[A-Za-z0-9_./-]{1,200}$/.test(ref) || !path || path.length > 500 || path.split("/").includes("..")) throw new HttpError(400, "Bad ref or path.");
+    const text = await cached(`file:${repo}:${ref}:${path}`, isSha(ref) ? 24 * 3_600_000 : 5 * 60_000, () => gh.file(repo, ref, path));
+    if (text.length > 400_000) throw new HttpError(422, "That file is too large to show.");
+    return c.json({ ref, path, text });
+  });
+
+  // ---------- explain a repo ----------
+
+  /** Running and finished explain jobs. A draft takes Claude a minute or two, longer than some proxies hold a request open. */
+  interface ExplainJob {
+    workspaceId: string;
+    userId: string;
+    repo: string;
+    status: "running" | "done" | "failed";
+    result?: unknown;
+    error?: string;
+    at: number;
+  }
+  const explainJobs = new Map<string, ExplainJob>();
+  const explainLog = new Map<string, number[]>();
+
+  app.post("/api/explain", async (c) => {
+    const viewer = requireRole(c, "editor");
+    const body = z.object({ repo: z.string().min(3).max(300), space: z.string().min(1).max(100), path: z.string().max(200).optional() }).parse(await c.req.json());
+    const repo = normalizeRepo(body.repo);
+    const space = await pagesSvc.findSpace(deps.db, c.get("workspaceId"), body.space);
+    if (!space) throw new HttpError(404, "No such space.");
+    const ai = await aiFor(c.get("workspaceId"));
+    if (!ai) throw new HttpError(400, "Explaining a repo needs Claude. An admin can add an Anthropic API key in Settings, or use Claude Code with the repo-explainer skill instead.");
+    limit(explainLog, c.get("workspaceId"), 20, "This workspace has explained 20 repos in the last hour. Try again later.");
+    const id = randomUUID();
+    const job: ExplainJob = { workspaceId: c.get("workspaceId"), userId: viewer.userId, repo, status: "running", at: Date.now() };
+    explainJobs.set(id, job);
+    for (const [k, j] of explainJobs) if (Date.now() - j.at > 24 * 3_600_000) explainJobs.delete(k);
+    background(
+      explainSvc
+        .explainRepo(pageDeps, gh, ai, { repo, spaceId: space.id, userId: viewer.userId, ...(body.path ? { path: body.path } : {}) })
+        .then((r) => Object.assign(job, { status: "done", result: { ...r, space: space.slug, editUrl: `${deps.config.publicUrl}/app/${space.slug}/${r.path}`, ...readmeSnippet(repo) } }))
+        .catch((err: unknown) => Object.assign(job, { status: "failed", error: err instanceof HttpError ? err.message : "Something went wrong while explaining the repo." })),
+    );
+    return c.json({ id, status: "running" }, 202);
+  });
+
+  app.get("/api/explain/:id", (c) => {
+    const viewer = requireRole(c, "editor");
+    const job = explainJobs.get(c.req.param("id"));
+    if (!job || job.workspaceId !== c.get("workspaceId") || job.userId !== viewer.userId) throw new HttpError(404, "No such job.");
+    return c.json({ status: job.status, repo: job.repo, ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) });
+  });
+
+  /** For the GitHub Action: re-check every page linked to this repo's branch, the same as a push webhook. */
+  app.post("/api/repos/:owner/:name/sync", async (c) => {
+    requireRole(c, "editor");
+    const repo = normalizeRepo(`${c.req.param("owner")}/${c.req.param("name")}`);
+    const { branch } = z.object({ branch: z.string().max(200).optional() }).parse(await c.req.json().catch(() => ({})));
+    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => !branch || p.branch === branch);
+    const workspaceId = c.get("workspaceId");
+    background(
+      (async () => {
+        const ai = await aiFor(workspaceId);
+        for (const p of linked) await reposSvc.checkDrift(pageDeps, gh, p.pageId, ai).catch((err) => console.error(`drift check failed for ${p.pageId}`, err));
+      })(),
+    );
+    return c.json({ checking: linked.length, pages: linked.map((p) => `${deps.config.publicUrl}/app/${p.spaceSlug}/${p.path}`) }, 202);
   });
 
   // ---------- widgets (spec §7) ----------
