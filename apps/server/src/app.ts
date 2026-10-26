@@ -99,6 +99,17 @@ export function createApp(deps: AppDeps) {
     return c.json({ error: "Something went wrong on our side." }, 500);
   });
 
+  /** For load balancers and App Runner: 200 when the server can reach its database, before any workspace
+   * exists (the workspace middleware below would refuse). */
+  app.get("/healthz", async (c) => {
+    try {
+      await deps.db.execute(sql`select 1`);
+      return c.text("ok");
+    } catch {
+      return c.text("database unreachable", 503);
+    }
+  });
+
   app.use(async (c, next) => {
     workspaceId ??= (await getWorkspace(deps.db, deps.config.workspaceSlug)).id;
     c.set("workspaceId", workspaceId);
@@ -155,16 +166,6 @@ export function createApp(deps: AppDeps) {
     c.header("X-Content-Type-Options", "nosniff");
     return c.body(body);
   }
-
-  /** For load balancers and App Runner: 200 when the server can reach its database. */
-  app.get("/healthz", async (c) => {
-    try {
-      await deps.db.execute(sql`select 1`);
-      return c.text("ok");
-    } catch {
-      return c.text("database unreachable", 503);
-    }
-  });
 
   // ---------- sign-in ----------
 

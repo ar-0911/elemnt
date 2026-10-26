@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createApp } from "../src/app.js";
+import { MemoryBlobStore } from "../src/lib/blobs.js";
 import { firstRun } from "../src/services/workspace.js";
 import { setup } from "./helpers.js";
 
@@ -13,6 +15,12 @@ describe("running on a host", () => {
     const res = await t.call("/healthz");
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("ok");
+  });
+
+  it("answers health checks before the workspace exists", async () => {
+    const fresh = createApp({ db: t.db, blobs: new MemoryBlobStore(), config: { ...t.config, workspaceSlug: "not-yet" } });
+    const res = await fresh.request("/healthz");
+    expect(res.status).toBe(200);
   });
 
   it("bootstraps a new workspace from ELEMNT_OWNER_EMAIL once, and leaves an existing one alone", async () => {
