@@ -67,7 +67,11 @@ describe("linking", () => {
     const redirect = await t.call("/r/acme/api");
     expect(redirect.status).toBe(302);
     expect(redirect.headers.get("location")).toBe("/s/oss/acme-api?utm_source=readme");
-    expect((await t.call("/r/acme/api/badge.svg")).headers.get("content-type")).toBe("image/svg+xml");
+    const badge = await t.call("/r/acme/api/badge.svg");
+    expect(badge.headers.get("content-type")).toBe("image/svg+xml");
+    // An SVG opened directly is a document that could run script, so it gets a CSP that forbids it.
+    expect(badge.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(badge.headers.get("x-content-type-options")).toBe("nosniff");
     expect((await t.call("/r/other/repo")).status).toBe(404);
 
     const page = await (await t.call("/s/oss/acme-api")).text();

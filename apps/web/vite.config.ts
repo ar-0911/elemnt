@@ -19,6 +19,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@elemnt/core/expr": fileURLToPath(new URL("../../packages/core/src/expr.ts", import.meta.url)),
+      "@elemnt/core/cdn": fileURLToPath(new URL("../../packages/core/src/cdn.ts", import.meta.url)),
       "@elemnt/core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
       "@elemnt/elements": fileURLToPath(new URL("../../packages/elements/src/index.ts", import.meta.url)),
       "decode-named-character-reference": decodeEntity,

@@ -28,6 +28,7 @@ export { contentCss, themeTokensCss } from "./theme.js";
 export * from "./style.js";
 export { evaluate, exprVariables, formatNumber, parseExpr, ExprError } from "./expr.js";
 export { sha256Hex } from "./sha256.js";
+export { MERMAID_BASE } from "./cdn.js";
 export type { AgentMarkdownOptions, HtmlOptions, Slide };
 export type { Runbook, RunbookStep } from "./runbooks.js";
 

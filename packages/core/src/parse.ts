@@ -61,6 +61,31 @@ function textDirectiveAsText(node: DirectiveNode): Text {
   return { type: "text", value: `:${node.name}${label}${attrText}`, ...(node.position ? { position: node.position } : {}) };
 }
 
+/**
+ * A directive the parser couldn't read (unbalanced quotes in its {attributes},
+ * say) falls through as plain paragraph text. That renders safely, but the
+ * author would never know the component is missing, so say so.
+ */
+function malformedDirectives(node: Text, registry: ReadonlyMap<string, AnyComponent>, diagnostics: Diagnostic[]) {
+  const lines = node.value.split("\n");
+  lines.forEach((line, i) => {
+    const m = line.match(/^\s*(:{2,})([A-Za-z][\w-]*)(.?)/);
+    if (!m || (m[3] !== "[" && m[3] !== "{" && m[3] !== "")) return;
+    const name = m[2]!;
+    const start = node.position?.start;
+    const pos = start ? { line: start.line + i, column: i === 0 ? start.column : 1 } : {};
+    const known = registry.has(name);
+    diagnostics.push({
+      severity: known ? "error" : "warning",
+      message: known
+        ? `"${m[1]}${name}" couldn't be read, so it shows as plain text. Check its {attributes}: every value needs matching quotes, and a value can't contain the same quote it's wrapped in.`
+        : `"${m[1]}${name}" looks like a component but isn't one, so it shows as plain text.`,
+      ...(known ? { component: name } : {}),
+      ...pos,
+    });
+  });
+}
+
 function formatIssues(error: z.ZodError): string {
   return error.issues.map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message)).join("; ");
 }
@@ -78,6 +103,10 @@ export function parseDocument(source: string, registry: ReadonlyMap<string, AnyC
   visit(tree, (node, index, parent) => {
     if (node.type === "code" && wantsRun(node) && !runtimeFor(node)) {
       diagnostics.push({ severity: "warning", message: `"${node.lang ?? "plain"}" code can't run in the page; only js and python can`, ...at(node) });
+      return;
+    }
+    if (node.type === "text") {
+      malformedDirectives(node, registry, diagnostics);
       return;
     }
     if (!isDirective(node)) return;

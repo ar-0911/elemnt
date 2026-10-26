@@ -112,8 +112,17 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  const appOrigin = new URL(deps.config.publicUrl).origin;
   app.use(async (c, next) => {
     c.set("nonce", randomBytes(16).toString("base64"));
+    // Cookies are SameSite=Lax, which stops other sites but not a sibling
+    // subdomain. So a browser write that rides on the session cookie must come
+    // from Elemnt's own pages. Bearer-token calls and cookieless requests (OAuth
+    // token exchange from Claude, webhooks) are unaffected.
+    if (!["GET", "HEAD", "OPTIONS"].includes(c.req.method) && getCookie(c, TOKEN_COOKIE) && !c.req.header("authorization")) {
+      const origin = c.req.header("origin");
+      if (origin && origin !== appOrigin && origin !== new URL(c.req.url).origin) throw new HttpError(403, "This request came from another site, so it was refused.");
+    }
     if (!workspaceId) {
       const [ws] = await deps.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, deps.config.workspaceSlug));
       workspaceId = ws?.id;
@@ -178,7 +187,17 @@ export function createApp(deps: AppDeps) {
     c.header("Content-Security-Policy", contentSecurityPolicy(c.get("nonce"), sandboxUrl));
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+    if (deps.config.publicUrl.startsWith("https://")) c.header("Strict-Transport-Security", "max-age=31536000");
     return c.html(body, status);
+  }
+
+  /** Images we draw (badge, README card) on the app's origin. Opened directly they're documents, so they get a CSP that runs nothing. */
+  function svg(c: Context<Env>, body: string, maxAge: number) {
+    c.header("Content-Type", "image/svg+xml");
+    c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Cache-Control", `public, max-age=${maxAge}`);
+    return c.body(body);
   }
 
   function markdown(c: Context<Env>, body: string) {
@@ -619,11 +638,7 @@ export function createApp(deps: AppDeps) {
     return c.redirect(`/s/${best.spaceSlug}/${best.path}?utm_source=readme`, 302);
   });
 
-  app.get("/r/:owner/:name/badge.svg", (c) => {
-    c.header("Content-Type", "image/svg+xml");
-    c.header("Cache-Control", "public, max-age=86400");
-    return c.body(BADGE);
-  });
+  app.get("/r/:owner/:name/badge.svg", (c) => svg(c, BADGE, 86400));
 
   // ---------- widgets (spec §7) ----------
 
