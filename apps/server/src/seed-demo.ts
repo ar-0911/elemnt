@@ -6,8 +6,7 @@ import { createElemnt } from "@elemnt/core";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { connect } from "./db/connect.js";
-import { FsBlobStore } from "./lib/blobs.js";
-import { loadEnv } from "./lib/config.js";
+import { blobStoreFromEnv, loadEnv } from "./lib/config.js";
 import { createPage, createSpace, findPage, findSpace } from "./services/pages.js";
 import { getWorkspace } from "./services/workspace.js";
 
@@ -18,7 +17,7 @@ const owner = await db.query.members.findFirst({ where: (m, { eq }) => eq(m.work
 if (!owner) throw new Error("Run bootstrap first.");
 
 const space = (await findSpace(db, ws.id, "demo")) ?? (await createSpace(db, ws.id, { slug: "demo", name: "Elemnt demo", visibility: "public" }));
-const deps = { db, blobs: new FsBlobStore(env.ELEMNT_BLOB_DIR), elemnt: createElemnt() };
+const deps = { db, blobs: await blobStoreFromEnv(env), elemnt: createElemnt() };
 
 for (const name of ["tour", "deploying", "rotate-key", "postmortem", "cli"]) {
   if (await findPage(db, space.id, name)) continue;
