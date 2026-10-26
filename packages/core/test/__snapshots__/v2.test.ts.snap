@@ -40,13 +40,13 @@ Open incidents (live value: incidents.open from status-api)
 `;
 
 exports[`fixture: runbook page > renders HTML for people 1`] = `
-"<h2>Rotate</h2>
+"<h2 id="rotate">Rotate</h2>
 <p>Current error rate is <elemnt-query data-source="metrics" data-key="billing.errors.rate" data-format="percent">~0.2%</elemnt-query>.</p>
 <elemnt-runbook data-runbook="rotate-api-key"><ol class="elemnt-runbook"><li class="elemnt-runbook-step" data-gate="none"><p class="elemnt-runbook-title">Create the new key</p><pre><code class="language-sh">acme keys create --name prod-2026
 </code></pre></li><li class="elemnt-runbook-step" data-gate="approve"><p class="elemnt-runbook-title">Revoke the old key<span class="elemnt-runbook-gate">Approval required</span></p><pre><code class="language-sh">acme keys revoke prod-2025
 </code></pre><p class="elemnt-runbook-expect">Expected output matches <code>revoked prod-2025</code></p></li></ol></elemnt-runbook>
 <hr>
-<h2>Check your math</h2>
+<h2 id="check-your-math">Check your math</h2>
 <elemnt-run data-runtime="python"><pre><code class="language-python">print(sum(range(10)))
 </code></pre></elemnt-run>
 <p class="elemnt-query"><elemnt-query data-source="status-api" data-key="incidents.open" data-format="number">Open incidents</elemnt-query></p>"

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigserial, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, bigserial, boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 
@@ -14,8 +14,28 @@ export const workspaces = pgTable("workspaces", {
   id: text("id").primaryKey(),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
+  /** The workspace's own Anthropic API key (bring your own key), AES-256-GCM sealed. */
+  aiKeyCiphertext: text("ai_key_ciphertext"),
+  /** Last four characters, so admins can tell which key is set. */
+  aiKeyHint: text("ai_key_hint"),
+  /** Verified workspaces' widgets run without a click on public pages and may use hostAllowlist. */
+  widgetsVerified: boolean("widgets_verified").notNull().default(false),
+  /** Hosts widgets may connect to (verified workspaces only), e.g. ["api.acme.dev"]. */
+  widgetHosts: jsonb("widget_hosts").$type<string[]>().notNull().default([]),
+  /** Lets signed-out readers of public pages use Ask the page (it spends the workspace's Claude key). */
+  askPublic: boolean("ask_public").notNull().default(false),
+  /** Named live-data sources for `:query`, configured by admins. */
+  querySources: jsonb("query_sources").$type<Record<string, QuerySource>>().notNull().default({}),
   createdAt: createdAt(),
 });
+
+/** A JSON endpoint `:query` reads. Request headers (often an API token) are sealed. */
+export interface QuerySource {
+  url: string;
+  /** Anyone who can read a public page may see its values; otherwise members only. */
+  public: boolean;
+  headersCiphertext?: string;
+}
 
 export const roles = ["owner", "admin", "editor", "viewer"] as const;
 export type Role = (typeof roles)[number];
@@ -38,6 +58,10 @@ export const apiTokens = pgTable("api_tokens", {
   name: text("name").notNull(),
   createdAt: createdAt(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  /** Set for OAuth-issued tokens (MCP clients); bootstrap and personal tokens don't expire. */
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  /** The OAuth client that holds this token, if any. */
+  clientId: text("client_id"),
 });
 
 export const visibilities = ["private", "workspace", "public"] as const;
@@ -159,3 +183,201 @@ export const linkedinPosts = pgTable("linkedin_posts", {
   sharedUrl: text("shared_url").notNull(),
   createdAt: createdAt(),
 });
+
+export const suggestionStatuses = ["open", "accepted", "rejected"] as const;
+
+/**
+ * A proposed change to a page, from Claude in the editor or from an agent over MCP.
+ * It stores the whole proposed source against the revision it was written for;
+ * hunks are computed on read and a person picks which ones to apply.
+ */
+export const suggestions = pgTable(
+  "suggestions",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    baseRevisionId: text("base_revision_id").notNull(),
+    proposedHash: text("proposed_hash").notNull(),
+    /** Who asked for it: "assist" (editor ⌘I), "mcp" (an agent), "drift" (repo check), "ask" (reader questions). */
+    origin: text("origin", { enum: ["assist", "mcp", "drift", "ask"] }).notNull(),
+    authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+    summary: text("summary").notNull(),
+    status: text("status", { enum: suggestionStatuses }).notNull().default("open"),
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /** The draft revision an accept produced. */
+    appliedRevisionId: text("applied_revision_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("suggestions_page").on(t.pageId, t.status)],
+);
+
+/** OAuth 2.1 clients registered dynamically by MCP clients (RFC 7591). */
+export const oauthClients = pgTable("oauth_clients", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  createdAt: createdAt(),
+});
+
+/** Single-use authorization codes, PKCE S256 only. */
+export const oauthCodes = pgTable("oauth_codes", {
+  codeHash: text("code_hash").primaryKey(),
+  clientId: text("client_id").notNull().references(() => oauthClients.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+/** Every widget seen at save time, by content hash. Code lives in the blob store under the same hash. */
+export const widgets = pgTable("widgets", {
+  hash: text("hash").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  /** Who first saved this code; shown on the widget's label. */
+  authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+  pageId: text("page_id"),
+  summary: text("summary").notNull(),
+  /** Scan findings at save time. */
+  findings: jsonb("findings").$type<{ severity: "error" | "warning"; message: string }[]>().notNull().default([]),
+  createdAt: createdAt(),
+});
+
+/** The kill switch: a blocked hash is disabled on every page at once. */
+export const widgetBlocks = pgTable("widget_blocks", {
+  hash: text("hash").primaryKey(),
+  reason: text("reason").notNull(),
+  blockedBy: text("blocked_by"),
+  createdAt: createdAt(),
+});
+
+export const widgetReports = pgTable(
+  "widget_reports",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    hash: text("hash").notNull(),
+    pageUrl: text("page_url"),
+    reason: text("reason").notNull(),
+    reporterId: text("reporter_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("widget_reports_hash").on(t.hash)],
+);
+
+/**
+ * Explainer pages: a page written against a repo at a pinned commit. Elemnt
+ * only reads the repo. When files the page cites change on the default
+ * branch, the drift check opens a suggestion on the page.
+ */
+export const repoLinks = pgTable(
+  "repo_links",
+  {
+    pageId: text("page_id").primaryKey().references(() => pages.id, { onDelete: "cascade" }),
+    /** "owner/name" on GitHub. */
+    repo: text("repo").notNull(),
+    branch: text("branch").notNull().default("main"),
+    pinnedCommit: text("pinned_commit").notNull(),
+    /** Repo paths the page explains; changes to these trigger a suggestion. Empty means any change. */
+    citedPaths: jsonb("cited_paths").$type<string[]>().notNull().default([]),
+    linkedBy: text("linked_by").references(() => users.id, { onDelete: "set null" }),
+    /** Head of the branch at the last check, and how far the page is behind it. */
+    checkedCommit: text("checked_commit"),
+    behindBy: integer("behind_by").notNull().default(0),
+    /** Cited paths that changed since the pinned commit, as of the last check. */
+    changedPaths: jsonb("changed_paths").$type<string[]>().notNull().default([]),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("repo_links_repo").on(t.repo)],
+);
+
+/**
+ * Ask the page: every question a reader asked, with the answer Claude gave.
+ * Questions the page couldn't answer ("gaps") are what editors turn into
+ * suggestions, and where they cluster is part of the confusion heatmap.
+ */
+export const pageQuestions = pgTable(
+  "page_questions",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    revisionId: text("revision_id"),
+    question: text("question").notNull(),
+    /** Text the reader selected when asking, if any. */
+    quote: text("quote"),
+    /** Heading id of the section the question is about. */
+    section: text("section"),
+    /** The answer as Elemnt source; its HTML is compiled on read. */
+    answer: text("answer").notNull(),
+    /** True when the page didn't cover the question. */
+    gap: boolean("gap").notNull().default(false),
+    /** utm_source of the visit ("direct" when none), to split out e.g. LinkedIn readers. */
+    source: text("source").notNull().default("direct"),
+    askerId: text("asker_id").references(() => users.id, { onDelete: "set null" }),
+    status: text("status", { enum: ["open", "resolved"] }).notNull().default("open"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("page_questions_page").on(t.pageId, t.createdAt)],
+);
+
+/** Aggregated reading signals per section: views, time spent, where readers left. No per-reader data. */
+export const sectionStats = pgTable(
+  "section_stats",
+  {
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+    section: text("section").notNull(),
+    views: integer("views").notNull().default(0),
+    dwellMs: bigint("dwell_ms", { mode: "number" }).notNull().default(0),
+    exits: integer("exits").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.pageId, t.source, t.section] })],
+);
+
+export const readingLevels = ["newcomer", "engineer", "exec"] as const;
+export type ReadingLevel = (typeof readingLevels)[number];
+
+/**
+ * Reading levels: the same page rewritten for a newcomer, an engineer or an
+ * executive. Claude writes a version from the published page; an editor
+ * approves it before readers see it. Bodies live in the blob store.
+ */
+export const pageLevels = pgTable(
+  "page_levels",
+  {
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    level: text("level", { enum: readingLevels }).notNull(),
+    /** The published revision this version was written from; older means possibly stale. */
+    baseRevisionId: text("base_revision_id").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    htmlHash: text("html_hash").notNull(),
+    markdownHash: text("markdown_hash").notNull(),
+    status: text("status", { enum: ["pending", "approved"] }).notNull().default("pending"),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    approvedBy: text("approved_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.pageId, t.level] })],
+);
+
+/** Make me a component: widgets Claude built from a description, saved for the whole workspace. */
+export const libraryComponents = pgTable(
+  "library_components",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    /** What it's for, shown in the / menu and the authoring guide. */
+    description: text("description").notNull(),
+    /** The widget's summary: what agents read in place of the widget. */
+    summary: text("summary").notNull(),
+    html: text("html").notNull(),
+    css: text("css").notNull(),
+    js: text("js").notNull(),
+    height: integer("height").notNull().default(320),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("library_components_slug").on(t.workspaceId, t.slug)],
+);

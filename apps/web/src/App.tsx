@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Me, type Space, type TreePage } from "./api";
+import { api, ApiError, getMe, type Me, type Space, type TreePage } from "./api";
 import { PageEditor } from "./PageEditor";
 import { Palette } from "./Palette";
+import { Settings } from "./Settings";
 import { navigate, useRoute } from "./router";
 
 const NEW_PAGE = (title: string) => `---
@@ -44,14 +45,14 @@ export function App() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [pages, setPages] = useState<TreePage[]>([]);
   const [palette, setPalette] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    api
-      .get<Me>("/api/me")
+    getMe()
       .then(setMe)
       .catch((e: ApiError) => {
-        if (e.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+        if (e.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
         else setError(e.message);
       });
     void api.get<Space[]>("/api/spaces").then((s) => {
@@ -134,6 +135,11 @@ export function App() {
               New space
             </button>
           )}
+          {canAdmin && (
+            <button type="button" className="btn ghost" onClick={() => setSettings(true)}>
+              Settings
+            </button>
+          )}
         </div>
         <div className="me">{me?.email}</div>
       </aside>
@@ -149,6 +155,7 @@ export function App() {
           {spaces.length === 0 ? <p>No spaces yet.{canAdmin ? " Create one to start writing." : ""}</p> : <p>Pick a page, or create a new one.</p>}
         </main>
       )}
+      {settings && <Settings onClose={() => setSettings(false)} />}
       {palette && route.space && (
         <Palette
           space={route.space}

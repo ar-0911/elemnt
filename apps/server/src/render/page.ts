@@ -1,8 +1,8 @@
 import { contentCss, themeTokensCss } from "@elemnt/core";
 /**
- * The reader shell around a stored rendition. Server-rendered, readable with
- * JavaScript off; one small nonce'd script adds tabs, the copy button and
- * Mermaid. The interactive Web Components package replaces it in M3.
+ * The reader shell around a stored rendition. Server-rendered and readable
+ * with JavaScript off; @elemnt/elements (served at /assets/elements.js) then
+ * hydrates tabs, charts, sliders, quizzes, diagrams, widgets and runnable code.
  */
 
 export function escapeHtml(s: string): string {
@@ -23,14 +23,51 @@ export interface ShellInput {
   share?: { dialogUrl: string; canPost: boolean; pageId: string };
   /** Present for members who can edit. */
   editUrl?: string;
+  /** Where widgets run; widgets stay static without it. */
+  sandboxUrl?: string;
+  /** Run widgets without a click (members, or verified workspaces). */
+  autorun?: boolean;
+  pageId?: string;
+  /** Show Ask the page. */
+  ask?: boolean;
+  /** Approved reading levels, and the one being shown. */
+  levels?: { level: string; label: string }[];
+  level?: string;
+  /** Explainer pages: the repo and commit the page was written against. */
+  repo?: { repo: string; pinnedCommit: string; checkedCommit: string | null; behindBy: number };
 }
 
-const MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+function levelNav(p: ShellInput): string {
+  if (!p.levels?.length) return "";
+  const href = (level?: string) => {
+    const q = new URLSearchParams();
+    if (level) q.set("level", level);
+    if (p.view === "markdown") q.set("view", "markdown");
+    const qs = q.toString();
+    return escapeHtml(qs ? `${p.canonicalUrl}?${qs}` : p.canonicalUrl);
+  };
+  const links = [{ level: undefined, label: "Original" }, ...p.levels].map(
+    (l) => `<a href="${href(l.level)}"${(l.level ?? undefined) === p.level ? ' aria-current="page"' : ""}>${escapeHtml(l.label)}</a>`,
+  );
+  return `<nav class="levels" aria-label="Reading level">${links.join("")}</nav>`;
+}
 
-export function contentSecurityPolicy(nonce: string): string {
+function repoBanner(r: NonNullable<ShellInput["repo"]>): string {
+  const base = `https://github.com/${escapeHtml(r.repo)}`;
+  const sha = escapeHtml(r.pinnedCommit);
+  const behind =
+    r.behindBy > 0 && r.checkedCommit
+      ? ` · <a href="${base}/compare/${sha}...${escapeHtml(r.checkedCommit)}">${r.behindBy} commit${r.behindBy === 1 ? "" : "s"} behind</a>`
+      : " · up to date";
+  return `<p class="repo-banner">Explains <a href="${base}">${escapeHtml(r.repo)}</a>, written against <a href="${base}/tree/${sha}"><code>${sha.slice(0, 7)}</code></a>${behind}</p>`;
+}
+
+export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): string {
   return [
     "default-src 'self'",
-    `script-src 'nonce-${nonce}' https://cdn.jsdelivr.net`,
+    // 'self' for /assets/elements.js; jsDelivr for Mermaid, loaded only on pages with diagrams.
+    `script-src 'nonce-${nonce}' 'self' https://cdn.jsdelivr.net`,
+    `frame-src ${sandboxUrl ? new URL(sandboxUrl).origin : "'none'"}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
     "connect-src 'self'",
@@ -51,6 +88,18 @@ header.bar a{color:var(--muted);text-decoration:none}.bar .crumb{font-size:14px}
 .btn{font:600 13px system-ui;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;text-decoration:none}
 .btn.li{background:#0a66c2;border-color:#0a66c2;color:#fff}
 main{max-width:760px;margin:0 auto;padding:32px 16px 96px}
+.levels{display:inline-flex;gap:2px;font-size:13px}.levels a{padding:4px 8px;border-radius:5px;color:var(--muted)}.levels a[aria-current=page]{background:var(--soft);color:var(--accent);font-weight:600}
+.elemnt-ask-open{position:fixed;right:20px;bottom:20px;font:600 14px system-ui;padding:10px 18px;border-radius:999px;border:0;background:var(--accent);color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer}
+.elemnt-ask-chip{position:absolute;z-index:5;font:600 12px system-ui;padding:5px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--accent);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.elemnt-ask{position:fixed;right:16px;bottom:16px;width:min(420px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 32px));display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.2);z-index:10}
+.elemnt-ask[hidden]{display:none}.elemnt-ask-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+.elemnt-ask-close{border:0;background:none;font-size:20px;color:var(--muted);cursor:pointer}
+.elemnt-ask-quote{margin:10px 14px 0;padding:6px 10px;border-left:3px solid var(--accent);color:var(--muted);font-size:13px;max-height:80px;overflow:auto}
+.elemnt-ask-log{overflow:auto;padding:4px 14px;flex:1}.elemnt-ask-q{font-weight:600;margin:12px 0 4px}.elemnt-ask-a{font-size:15px}.elemnt-ask-a[data-error]{color:var(--danger)}
+.elemnt-ask-meta{font-size:13px;color:var(--muted)}
+.elemnt-ask form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}.elemnt-ask textarea{flex:1;font:inherit;font-size:14px;resize:vertical;border:1px solid var(--line);border-radius:6px;padding:6px 8px;background:var(--bg);color:var(--fg)}
+@media print{.elemnt-ask,.elemnt-ask-open,.elemnt-ask-chip,header.bar{display:none}}
+.repo-banner{font-size:13px;color:var(--muted);border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 12px;margin:0 0 20px}
 .md pre{white-space:pre-wrap;font-size:14px}
 dialog{border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);max-width:520px;width:calc(100% - 32px)}
 dialog textarea{width:100%;min-height:120px;font:inherit}
@@ -58,18 +107,34 @@ ${contentCss}
 `;
 
 const SCRIPT = `
-for (const root of document.querySelectorAll(".elemnt-tabs")) {
-  const panels = [...root.querySelectorAll(":scope > .elemnt-tab")];
-  if (panels.length < 2) continue;
-  const list = document.createElement("div"); list.className = "tablist"; list.setAttribute("role", "tablist");
-  panels.forEach((p, i) => {
-    p.querySelector(".elemnt-tab-label")?.setAttribute("hidden", "");
-    const b = document.createElement("button"); b.type = "button"; b.role = "tab"; b.textContent = p.dataset.label || "Tab " + (i + 1);
-    b.onclick = () => { panels.forEach((q, j) => { q.hidden = j !== i; list.children[j].setAttribute("aria-selected", String(j === i)); }); };
-    list.append(b);
-  });
-  root.prepend(list); list.children[0].click();
+import { enhance, mountAsk, trackReading } from "/assets/elements.js";
+const cfg = JSON.parse(document.getElementById("elemnt-config").textContent);
+const article = document.querySelector("article.elemnt-page");
+const source = new URLSearchParams(location.search).get("utm_source") || undefined;
+const options = {
+  sandboxOrigin: cfg.sandboxUrl ?? undefined,
+  widgets: {
+    autorun: cfg.autorun,
+    report: async (hash, reason) => {
+      const res = await fetch("/api/widgets/" + hash + "/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, page: location.pathname }) });
+      if (!res.ok) throw new Error("report failed");
+    },
+  },
+};
+if (article) {
+  enhance(article, options);
+  if (cfg.pageId) trackReading(article, { pageId: cfg.pageId, source });
+  if (cfg.pageId && cfg.ask) mountAsk(article, { pageId: cfg.pageId, source, enhance: (el) => enhance(el, options) });
 }
+document.getElementById("li-draft")?.addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true; btn.textContent = "Drafting…";
+  const res = await fetch("/api/pages/" + post.dataset.page + "/linkedin/draft", { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) document.getElementById("commentary").value = data.commentary;
+  else document.getElementById("li-status").textContent = data.error || "Couldn't draft a post.";
+  btn.disabled = false; btn.textContent = "Draft with Claude";
+});
 const copy = document.getElementById("copy-md");
 copy?.addEventListener("click", async () => {
   const text = document.getElementById("md-body")?.textContent ?? "";
@@ -85,18 +150,15 @@ document.getElementById("li-form")?.addEventListener("submit", async (e) => {
   const data = await res.json().catch(() => ({}));
   status.innerHTML = res.ok ? (data.postUrl ? 'Posted. <a href="' + data.postUrl + '" target="_blank" rel="noopener">View on LinkedIn</a>' : "Posted.") : (data.error || "Posting failed.");
 });
-if (document.querySelector("pre.mermaid")) {
-  const { default: mermaid } = await import("${MERMAID}");
-  mermaid.initialize({ startOnLoad: false, theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default" });
-  await mermaid.run({ querySelector: "pre.mermaid" });
-}
 `;
 
 export function renderShell(p: ShellInput): string {
   const t = escapeHtml(p.title);
   const d = p.summary ? escapeHtml(p.summary) : "";
   const pageHref = p.canonicalUrl;
-  const mdViewHref = `${p.canonicalUrl}?view=markdown`;
+  const lv = p.level ? `level=${encodeURIComponent(p.level)}` : "";
+  const pageViewHref = lv ? `${p.canonicalUrl}?${lv}` : p.canonicalUrl;
+  const mdViewHref = `${p.canonicalUrl}?view=markdown${lv ? `&${lv}` : ""}`;
   const content =
     p.view === "page"
       ? `<article class="elemnt-page">${/<h1[\s>]/.test(p.body) ? "" : `<h1>${t}</h1>${d ? `<p class="lede">${d}</p>` : ""}`}${p.body}</article>`
@@ -107,7 +169,7 @@ export function renderShell(p: ShellInput): string {
       (p.share.canPost ? `<button class="btn" id="post-li" type="button" data-page="${escapeHtml(p.share.pageId)}">Post from Elemnt</button>` : "")
     : "";
   const dialog = p.share?.canPost
-    ? `<dialog id="li-dialog"><form id="li-form" method="dialog"><h3>Post to LinkedIn</h3><label for="commentary">What do you want to say?</label><textarea id="commentary" name="commentary" maxlength="3000" required>New write-up: ${t}${d ? `. ${d}` : ""}</textarea><p><button class="btn li" type="submit">Post</button> <button class="btn" type="button" onclick="this.closest('dialog').close()">Cancel</button></p><p id="li-status" role="status"></p></form></dialog>`
+    ? `<dialog id="li-dialog"><form id="li-form" method="dialog"><h3>Post to LinkedIn</h3><label for="commentary">What do you want to say?</label><textarea id="commentary" name="commentary" maxlength="3000" required>New write-up: ${t}${d ? `. ${d}` : ""}</textarea><p><button class="btn" type="button" id="li-draft">Draft with Claude</button> <button class="btn li" type="submit">Post</button> <button class="btn" type="button" onclick="this.closest('dialog').close()">Cancel</button></p><p id="li-status" role="status"></p></form></dialog>`
     : "";
 
   return `<!doctype html>
@@ -126,15 +188,23 @@ ${d ? `<meta property="og:description" content="${d}">` : ""}
 <header class="bar">
   <span class="crumb"><a href="/s/${escapeHtml(p.space.slug)}">${escapeHtml(p.space.name)}</a> / ${t}</span>
   <span class="actions">
-    <nav class="toggle" aria-label="View"><a href="${escapeHtml(pageHref)}"${p.view === "page" ? ' aria-current="page"' : ""}>Page</a><a href="${escapeHtml(mdViewHref)}"${p.view === "markdown" ? ' aria-current="page"' : ""}>Markdown</a></nav>
+    ${levelNav(p)}
+    <a class="btn" href="${escapeHtml(pageHref)}?view=present${p.level ? `&amp;level=${escapeHtml(p.level)}` : ""}">Present</a>
+    <nav class="toggle" aria-label="View"><a href="${escapeHtml(pageViewHref)}"${p.view === "page" ? ' aria-current="page"' : ""}>Page</a><a href="${escapeHtml(mdViewHref)}"${p.view === "markdown" ? ' aria-current="page"' : ""}>Markdown</a></nav>
     ${p.editUrl ? `<a class="btn" href="${escapeHtml(p.editUrl)}">Edit</a>` : ""}
     ${share}
   </span>
 </header>
-<main>${content}</main>
+<main>${p.repo ? repoBanner(p.repo) : ""}${content}</main>
 ${dialog}
+<script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: p.sandboxUrl ?? null, autorun: Boolean(p.autorun), pageId: p.pageId ?? null, ask: Boolean(p.ask && p.view === "page") })}</script>
 <script type="module" nonce="${p.nonce}">${SCRIPT}</script>
 </body></html>`;
+}
+
+/** JSON that can't end the script element it sits in. */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 export function renderSimple(nonce: string, title: string, bodyHtml: string): string {

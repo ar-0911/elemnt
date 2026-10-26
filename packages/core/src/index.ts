@@ -3,13 +3,32 @@ import { toHtml, toHtmlTree, type HtmlOptions } from "./html.js";
 import { toAgentMarkdown, toAgentMarkdownTree, type AgentMarkdownOptions } from "./markdown.js";
 import { parseDocument } from "./parse.js";
 import { toSlides, type Slide } from "./slides.js";
-import type { AnyComponent, Diagnostic, Frontmatter, ParsedDocument } from "./types.js";
+import type { AnyComponent, Diagnostic, DirectiveNode, Frontmatter, ParsedDocument } from "./types.js";
+import { visit } from "unist-util-visit";
+import { elemntData } from "./directive.js";
+import { widgetCode, widgetHash, type WidgetCode } from "./components/widget.js";
+import { collectRunbooks, type Runbook } from "./runbooks.js";
+
+function collectWidgets(doc: ParsedDocument): CompileResult["widgets"] {
+  const out: CompileResult["widgets"] = [];
+  visit(doc.tree, "containerDirective", (node) => {
+    const d = node as DirectiveNode;
+    const data = elemntData(d);
+    if (d.name !== "widget" || !data) return;
+    const code = widgetCode(d);
+    out.push({ hash: widgetHash(code), code, summary: (data.props as { summary: string }).summary });
+  });
+  return out;
+}
 
 export * from "./types.js";
 export * from "./components/index.js";
-export { elemntSanitizeSchema } from "./html.js";
+export { elemntSanitizeSchema, slugify } from "./html.js";
 export { contentCss, themeTokensCss } from "./theme.js";
+export { evaluate, exprVariables, formatNumber, parseExpr, ExprError } from "./expr.js";
+export { sha256Hex } from "./sha256.js";
 export type { AgentMarkdownOptions, HtmlOptions, Slide };
+export type { Runbook, RunbookStep } from "./runbooks.js";
 
 export interface CompileResult {
   /** HTML fragment for people. Interactive parts are custom elements that hydrate on the client. */
@@ -20,6 +39,8 @@ export interface CompileResult {
   diagnostics: Diagnostic[];
   /** True when there are no error diagnostics. Saving is blocked otherwise. */
   ok: boolean;
+  /** Every valid `:::widget` on the page, by content hash, for the sandbox to serve. */
+  widgets: { hash: string; code: WidgetCode; summary: string }[];
 }
 
 export interface Elemnt {
@@ -33,6 +54,8 @@ export interface Elemnt {
   toSlides(doc: ParsedDocument): Slide[];
   /** Parse once, produce both projections. */
   compile(source: string): CompileResult;
+  /** Runbooks on the page, structured for an agent to run (MCP `get_runbook`). */
+  runbooks(source: string): Runbook[];
   /** Markdown guide to every registered component, for the `/` menu and MCP `get_authoring_guide`. */
   authoringGuide(): string;
 }
@@ -65,8 +88,10 @@ export function createElemnt(options: ElemntOptions = {}): Elemnt {
         frontmatter: doc.frontmatter,
         diagnostics: doc.diagnostics,
         ok: !doc.diagnostics.some((d) => d.severity === "error"),
+        widgets: collectWidgets(doc),
       };
     },
+    runbooks: (source) => collectRunbooks(parseDocument(source, registry)),
     authoringGuide() {
       const sections = [...registry.values()].map(
         (c) => `## ${c.name}\n\n${c.authoring.doc}\n\n~~~~md\n${c.authoring.snippet}\n~~~~`,

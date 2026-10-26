@@ -49,14 +49,14 @@ A canary takes 5% of traffic, so a bad release hurts few users.
 `;
 
 exports[`fixture: onboarding page > renders HTML for people 1`] = `
-"<h2>Before you start</h2>
+"<h2 id="before-you-start">Before you start</h2>
 <aside class="elemnt-callout" data-type="warn" role="note"><p class="elemnt-callout-title">Production access</p><p>You need the <code>deployer</code> role. Ask in #platform if you don't have it.</p></aside>
 <p>Meetings start at 10:30 and the ratio:high flag stays literal.</p>
-<h2>Install</h2>
+<h2 id="install">Install</h2>
 <elemnt-tabs><div class="elemnt-tabs"><section class="elemnt-tab" data-label="npm"><p class="elemnt-tab-label">npm</p><pre><code class="language-sh">npm i -g @acme/deploy
 </code></pre></section><section class="elemnt-tab" data-label="pnpm"><p class="elemnt-tab-label">pnpm</p><pre><code class="language-sh">pnpm add -g @acme/deploy
 </code></pre></section></div></elemnt-tabs>
-<h2>Ship it</h2>
+<h2 id="ship-it">Ship it</h2>
 <elemnt-steps><div class="elemnt-steps"><ol>
 <li><strong>Tag</strong> the release with <code>acme tag</code>.</li>
 <li><strong>Watch</strong> the canary dashboard for 10 minutes.</li>

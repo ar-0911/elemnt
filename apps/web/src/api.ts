@@ -42,6 +42,17 @@ export interface Me {
   email: string;
   role: "owner" | "admin" | "editor" | "viewer" | undefined;
   linkedin: { connected: boolean; name?: string };
+  /** Origin that runs widgets and runnable code; null when the server has none. */
+  sandboxUrl: string | null;
+}
+
+let me: Promise<Me> | undefined;
+/** /api/me, fetched once per session. */
+export const getMe = () => (me ??= api.get<Me>("/api/me"));
+
+export interface WidgetFinding {
+  severity: "error" | "warning";
+  message: string;
 }
 
 export interface Space {
@@ -102,4 +113,35 @@ export interface SearchHit {
   spaceSlug: string;
   spaceName: string;
   snippetHtml: string;
+}
+
+export interface Hunk {
+  index: number;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+export interface SuggestionSummary {
+  id: string;
+  summary: string;
+  origin: "assist" | "mcp" | "drift" | "ask";
+  status: "open" | "accepted" | "rejected";
+  createdAt: string;
+  authorName: string | null;
+  authorEmail: string | null;
+}
+
+export interface SuggestionDetail {
+  suggestion: SuggestionSummary & { baseRevisionId: string };
+  stale: boolean;
+  hunks: Hunk[];
+}
+
+export interface AiStatus {
+  configured: boolean;
+  source: "workspace" | "server" | null;
+  hint: string | null;
 }
