@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Elemnt Field Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a reference manual. Sticky section index on the left, one reading column, wide tables scroll in place. */
+:root {
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --ink: #141a2b;
+  --muted: #56607a;
+  --line: #d8deea;
+  --accent: #2949c7;
+  --accent-soft: #e5eafb;
+  --code-bg: #eef1f8;
+  --ok: #1d7a4d; --warn: #9a5b00; --bad: #b3261e;
+  --ok-soft: #e3f3ea; --warn-soft: #fbf0dc; --bad-soft: #fbe5e3;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1220; --panel: #141b2e; --ink: #e6eaf5; --muted: #98a2bd; --line: #26304a;
+    --accent: #8ea4ff; --accent-soft: #1c2647; --code-bg: #10172a;
+    --ok: #6fd3a0; --warn: #f0b860; --bad: #ff8a80;
+    --ok-soft: #12291f; --warn-soft: #2c2210; --bad-soft: #321615;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1220; --panel: #141b2e; --ink: #e6eaf5; --muted: #98a2bd; --line: #26304a;
+  --accent: #8ea4ff; --accent-soft: #1c2647; --code-bg: #10172a;
+  --ok: #6fd3a0; --warn: #f0b860; --bad: #ff8a80;
+  --ok-soft: #12291f; --warn-soft: #2c2210; --bad-soft: #321615;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15.5px/1.6 var(--body); }
+.wrap { max-width: 1180px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 40px 80px; display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 13.5px; }
+nav.toc .k { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--accent-soft); color: var(--ink); outline: none; }
+main { min-width: 0; }
+header.top { padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(32px, 5vw, 46px); font-weight: 700; margin-top: 12px; letter-spacing: -.01em; }
+h2 { font-size: 27px; font-weight: 700; margin-bottom: 14px; }
+h3 { font-size: 18.5px; font-weight: 500; margin: 28px 0 10px; }
+p { margin: 0 0 14px; max-width: 70ch; }
+.lede { font-size: 17.5px; color: var(--muted); max-width: 64ch; margin-top: 14px; }
+section { padding-top: 44px; scroll-margin-top: 16px; }
+a { color: var(--accent); }
+code, kbd { font-family: var(--mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { font: 13px/1.55 var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 16px; }
+pre code { background: none; padding: 0; font-size: inherit; }
+pre .c { color: var(--muted); }
+.facts { display: flex; flex-wrap: wrap; gap: 10px 28px; margin-top: 22px; font-size: 14px; color: var(--muted); }
+.facts b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.branches { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); margin: 18px 0 8px; }
+.branches > div { padding: 14px 16px; border-right: 1px solid var(--line); min-width: 0; }
+.branches > div:last-child { border-right: 0; }
+.branches .b { font: 500 12px/1.3 var(--mono); color: var(--accent); }
+.branches .t { font-weight: 600; margin: 4px 0 2px; }
+.branches .d { font-size: 13px; color: var(--muted); }
+.figure { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto; margin: 6px 0 18px; }
+.figure svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.figure .cap { font-size: 13px; color: var(--muted); margin-top: 10px; }
+svg text { font-family: var(--body); }
+.tw { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font: 500 11.5px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--code-bg); }
+td.f { font-family: var(--mono); font-size: 12.8px; white-space: nowrap; color: var(--ink); }
+td.f small { color: var(--muted); font-size: 11.5px; }
+details.pkg { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 12px; }
+details.pkg > summary { cursor: pointer; padding: 14px 18px; display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; list-style: none; }
+details.pkg > summary::-webkit-details-marker { display: none; }
+details.pkg > summary::before { content: "▸"; color: var(--muted); font-size: 12px; transition: transform .15s; }
+details.pkg[open] > summary::before { transform: rotate(90deg); }
+details.pkg > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
+.pn { font: 600 15px/1.2 var(--mono); }
+.pd { color: var(--muted); font-size: 14px; flex: 1 1 260px; }
+details.pkg .tw { border: 0; border-top: 1px solid var(--line); border-radius: 0 0 10px 10px; margin: 0; }
+ol.flow { list-style: none; counter-reset: s; padding: 0; margin: 0 0 18px; border-left: 2px solid var(--line); }
+ol.flow > li { counter-increment: s; position: relative; padding: 0 0 14px 26px; max-width: 78ch; }
+ol.flow > li::before { content: counter(s); position: absolute; left: -12px; top: 1px; width: 22px; height: 22px; border-radius: 50%; background: var(--panel); border: 2px solid var(--accent); color: var(--accent); font: 600 11px/18px var(--mono); text-align: center; }
+ol.flow .loc { font: 12.5px var(--mono); color: var(--muted); }
+.fail { color: var(--bad); font-weight: 500; }
+.pill { display: inline-block; font: 600 11.5px/1 var(--mono); padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
+.p4 { background: var(--warn-soft); color: var(--warn); }
+.p5 { background: var(--bad-soft); color: var(--bad); }
+.p2 { background: var(--ok-soft); color: var(--ok); }
+.note { border: 1px solid var(--line); border-left: 3px solid var(--warn); background: var(--panel); border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 0 0 18px; max-width: 78ch; font-size: 14.5px; }
+.note b { color: var(--warn); }
+.ladder { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 0 0 18px; }
+.ladder > div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.ladder .q { font: 500 11.5px/1 var(--mono); color: var(--accent); letter-spacing: .05em; text-transform: uppercase; }
+.ladder h4 { margin: 6px 0 6px; font: 600 15px/1.3 var(--body); }
+.ladder p { font-size: 13.8px; color: var(--muted); margin: 0; }
+footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding-block: 24px 60px; }
+  nav.toc { position: static; margin-bottom: 8px; }
+  nav.toc ol { display: flex; flex-wrap: wrap; gap: 4px; }
+  nav.toc a { border: 1px solid var(--line); padding: 4px 10px; }
+  .branches { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .branches > div:nth-child(2) { border-right: 0; }
+  .branches > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+}
+@media (max-width: 480px) { .branches { grid-template-columns: minmax(0, 1fr); } .branches > div { border-right: 0; border-bottom: 1px solid var(--line); } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<nav class="toc" aria-label="Sections">
+  <div class="k">Field guide</div>
+  <ol>
+    <li><a href="#branches">Where the code is</a></li>
+    <li><a href="#shape">The shape of it</a></li>
+    <li><a href="#map">Code map</a></li>
+    <li><a href="#find">"Where is…?"</a></li>
+    <li><a href="#flows">How requests flow</a></li>
+    <li><a href="#debug">Something broke</a></li>
+    <li><a href="#errors">Error codes</a></li>
+    <li><a href="#failures">Known weak spots</a></li>
+    <li><a href="#tests">Tests</a></li>
+    <li><a href="#data">Looking at data</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">ar-0911/elemnt · read at feat/m7-deploy (PR #11)</div>
+  <h1>Elemnt field guide</h1>
+  <p class="lede">Where every part of Elemnt lives, what it does, how a keystroke becomes a stored revision and a reader's page, and what to do when one of those steps fails.</p>
+  <div class="facts">
+    <span><b>4</b> workspace packages</span>
+    <span><b>~12k</b> lines of TypeScript</span>
+    <span><b>173</b> tests, all passing</span>
+    <span><b>22</b> tables, <b>7</b> migrations</span>
+    <span>checked <b>2026-10-26</b></span>
+  </div>
+</header>
+
+<section id="branches">
+  <h2>Where the code is</h2>
+  <p>Only M1–M3 are on <code>main</code>. The rest is in three stacked pull requests, each built on the one before. To read or run everything, check out the top of the stack:</p>
+  <div class="branches">
+    <div><div class="b">main</div><div class="t">M1–M3</div><div class="d">Core compiler, server, split-view editor</div></div>
+    <div><div class="b">feat/v2-ai · #9</div><div class="t">M4–M6 + v2</div><div class="d">Claude, MCP, widgets, repo explainers, v2 features</div></div>
+    <div><div class="b">feat/themes · #10</div><div class="t">Themes</div><div class="d">Page styles, org theme, dark mode, layout components</div></div>
+    <div><div class="b">feat/m7-deploy · #11</div><div class="t">M7 deploy</div><div class="d">Cloudflare Containers, AWS App Runner</div></div>
+  </div>
+<pre><code>git fetch origin && git checkout feat/m7-deploy
+pnpm install && pnpm build && pnpm test   <span class="c"># all green on 2026-10-26: core 67, elements 9, web 1, server 96</span></code></pre>
+  <p>Merge order is #9 into <code>main</code>, then #10, then #11. A bug fix belongs on the lowest branch that contains the broken code, so it flows up through the stack.</p>
+</section>
+
+<section id="shape">
+  <h2>The shape of it</h2>
+  <p>One idea holds the design together: <b>the compiler in <code>@elemnt/core</code> is pure and runs in two places.</b> The editor runs it in a Web Worker for the live preview, and the server runs it on every save. Both produce the same HTML (for people) and Markdown (for agents), so a preview bug and a published-page bug are almost always the same bug.</p>
+  <div class="figure">
+    <svg viewBox="0 0 900 400" role="img" aria-label="Architecture: the browser editor and reader talk to one Hono server, which uses Postgres and a blob store. The core compiler runs in both the editor worker and the server.">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker>
+      </defs>
+      <!-- browser band -->
+      <rect x="10" y="10" width="880" height="110" rx="10" fill="var(--code-bg)" stroke="var(--line)"/>
+      <text x="26" y="32" font-size="11" fill="var(--muted)" letter-spacing="1">BROWSER</text>
+      <rect x="26" y="44" width="250" height="62" rx="8" fill="var(--panel)" stroke="var(--accent)"/>
+      <text x="40" y="68" font-size="14" font-weight="600" fill="var(--ink)">Editor  apps/web  (/app)</text>
+      <text x="40" y="88" font-size="12" fill="var(--muted)">React + CodeMirror, compile.worker</text>
+      <rect x="300" y="44" width="240" height="62" rx="8" fill="var(--panel)" stroke="var(--accent)"/>
+      <text x="314" y="68" font-size="14" font-weight="600" fill="var(--ink)">Reader  /s/:space/:path</text>
+      <text x="314" y="88" font-size="12" fill="var(--muted)">server HTML + elements.js</text>
+      <rect x="564" y="44" width="150" height="62" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-dasharray="4 3"/>
+      <text x="578" y="68" font-size="14" font-weight="600" fill="var(--ink)">Widget iframe</text>
+      <text x="578" y="88" font-size="12" fill="var(--muted)">sandbox origin /w/*</text>
+      <rect x="738" y="44" width="136" height="62" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="752" y="68" font-size="14" font-weight="600" fill="var(--ink)">Claude / Code</text>
+      <text x="752" y="88" font-size="12" fill="var(--muted)">MCP client</text>
+      <!-- server -->
+      <rect x="10" y="160" width="880" height="130" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="656" y="182" font-size="11" fill="var(--muted)" letter-spacing="1">apps/server · one Node process, :8787</text>
+      <rect x="26" y="196" width="200" height="78" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="40" y="220" font-size="14" font-weight="600" fill="var(--ink)">app.ts</text>
+      <text x="40" y="240" font-size="12" fill="var(--muted)">auth middleware, every route,</text>
+      <text x="40" y="256" font-size="12" fill="var(--muted)">error → JSON</text>
+      <rect x="244" y="196" width="196" height="78" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="258" y="220" font-size="14" font-weight="600" fill="var(--ink)">services/*</text>
+      <text x="258" y="240" font-size="12" fill="var(--muted)">pages, suggestions, ai,</text>
+      <text x="258" y="256" font-size="12" fill="var(--muted)">widgets, repos, theme…</text>
+      <rect x="458" y="196" width="130" height="78" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="472" y="220" font-size="14" font-weight="600" fill="var(--ink)">mcp.ts</text>
+      <text x="472" y="240" font-size="12" fill="var(--muted)">13 tools,</text>
+      <text x="472" y="256" font-size="12" fill="var(--muted)">OAuth in oauth.ts</text>
+      <rect x="606" y="196" width="130" height="78" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="620" y="220" font-size="14" font-weight="600" fill="var(--ink)">sandbox.ts</text>
+      <text x="620" y="240" font-size="12" fill="var(--muted)">same process,</text>
+      <text x="620" y="256" font-size="12" fill="var(--muted)">chosen by Host</text>
+      <rect x="754" y="196" width="120" height="78" rx="8" fill="var(--accent-soft)" stroke="var(--accent)"/>
+      <text x="768" y="220" font-size="14" font-weight="600" fill="var(--ink)">@elemnt/core</text>
+      <text x="768" y="240" font-size="12" fill="var(--muted)">compile on</text>
+      <text x="768" y="256" font-size="12" fill="var(--muted)">every save</text>
+      <!-- storage -->
+      <rect x="140" y="326" width="260" height="58" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="154" y="350" font-size="14" font-weight="600" fill="var(--ink)">Postgres (Drizzle)</text>
+      <text x="154" y="369" font-size="12" fill="var(--muted)">pages, revisions, suggestions… (ids, hashes)</text>
+      <rect x="430" y="326" width="300" height="58" rx="8" fill="var(--panel)" stroke="var(--line)"/>
+      <text x="444" y="350" font-size="14" font-weight="600" fill="var(--ink)">Blob store (disk or S3/R2)</text>
+      <text x="444" y="369" font-size="12" fill="var(--muted)">source, HTML, Markdown by sha256</text>
+      <!-- arrows -->
+      <path d="M150 106 V196" stroke="var(--muted)" fill="none" marker-end="url(#ar)"/>
+      <path d="M420 106 V150 H130 V196" stroke="var(--muted)" fill="none" marker-end="url(#ar)"/>
+      <path d="M640 106 V196" stroke="var(--muted)" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+      <path d="M806 106 V140 H523 V196" stroke="var(--muted)" fill="none" marker-end="url(#ar)"/>
+      <path d="M226 235 H244" stroke="var(--muted)" fill="none" marker-end="url(#ar)"/>
+      <path d="M300 274 V326" stroke="var(--muted)" fill="none" marker-end="url(#ar)"/>
+      <path d="M400 274 V300 H560 V326" stroke="var(--muted)" fill="none" marker-end="url(#ar)"/>
+      <text x="160" y="140" font-size="11" fill="var(--muted)">/api/*</text>
+      <text x="814" y="132" font-size="11" fill="var(--muted)">/mcp</text>
+    </svg>
+    <div class="cap">The editor's worker also runs <code>@elemnt/core</code>, so its preview matches what the server stores. Postgres holds only metadata and blob hashes; the page bodies live in the blob store.</div>
+  </div>
+</section>
+
+<section id="map">
+  <h2>Code map</h2>
+  <p>Open a package to see every file that matters and what it is for. Paths are relative to the repo root.</p>
+
+  <details class="pkg" open>
+    <summary><span class="pn">packages/core</span><span class="pd">The compiler. Markdown + directives in; sanitized HTML, agent Markdown, diagnostics, widgets and slides out. No I/O, no DOM.</span></summary>
+    <div class="tw"><table>
+      <tr><th>File</th><th>What it does</th></tr>
+      <tr><td class="f">src/index.ts</td><td><code>createElemnt()</code>: builds the component registry and exposes <code>compile()</code>, the one call both editor and server use. Also <code>authoringGuide()</code>, which Claude reads.</td></tr>
+      <tr><td class="f">src/parse.ts</td><td>remark pipeline (GFM, frontmatter, directives). Validates each <code>:::name</code> against its component's zod props and pushes <b>diagnostics</b> instead of throwing. Start here for "Unknown component" or "Invalid props".</td></tr>
+      <tr><td class="f">src/html.ts</td><td>mdast → hast → HTML, calling each component's <code>render()</code>, then sanitizes with an allowlist. If a tag or attribute vanishes from output, it is missing from <code>elemntSanitizeSchema</code>.</td></tr>
+      <tr><td class="f">src/markdown.ts</td><td>The agent projection: every component replaced by its <code>toMarkdown()</code>. Invalid directives degrade to their plain content.</td></tr>
+      <tr><td class="f">src/types.ts</td><td>The <code>ElemntComponent</code> contract: <code>props</code>, <code>validate</code>, <code>render</code>, <code>toMarkdown</code>, <code>authoring</code>.</td></tr>
+      <tr><td class="f">src/directive.ts</td><td>Helpers to split a directive into its <code>[label]</code> and content.</td></tr>
+      <tr><td class="f">src/components/*.ts</td><td>One file per component (callout, tabs, chart, runbook, widget, hero, graphic…). <code>components/index.ts</code> lists the 32 built-ins; a new component must be added there.</td></tr>
+      <tr><td class="f">src/style.ts · theme.ts</td><td>Page styles and org themes as plain data, and the CSS tokens for light/dark.</td></tr>
+      <tr><td class="f">src/expr.ts</td><td>A tiny safe arithmetic language for <code>:::explore</code> sliders.</td></tr>
+      <tr><td class="f">src/slides.ts · runbooks.ts · runnable.ts</td><td>Present mode (split at h1/h2/<code>---</code>), runbooks as structured steps for agents, and which code fences can run.</td></tr>
+      <tr><td class="f">test/</td><td>Snapshot tests over fixture pages (<code>compile</code>, <code>m5</code>, <code>v2</code>, <code>style</code>).</td></tr>
+    </table></div>
+  </details>
+
+  <details class="pkg">
+    <summary><span class="pn">packages/elements</span><span class="pd">The browser runtime. Hydrates server-rendered HTML: tabs, charts, sliders, quizzes, Mermaid, widgets, Run buttons.</span></summary>
+    <div class="tw"><table>
+      <tr><th>File</th><th>What it does</th></tr>
+      <tr><td class="f">src/index.ts</td><td><code>enhance(root)</code>: runs every enhancer once per element. Widgets and Run are skipped without a sandbox origin.</td></tr>
+      <tr><td class="f">src/widget.ts</td><td>Host side of the widget sandbox: creates the iframe on the sandbox origin, sizes it, gates links.</td></tr>
+      <tr><td class="f">src/run.ts</td><td><code>```js run</code> / <code>```python run</code>: runs code in a throwaway sandboxed frame. Python loads Pyodide from jsDelivr.</td></tr>
+      <tr><td class="f">src/ask.ts · signals.ts · present.ts</td><td>Ask-the-page panel, reading signals for the confusion heatmap, and the slide deck.</td></tr>
+      <tr><td class="f">src/theme.ts</td><td>Light/dark toggle, stored in <code>localStorage["elemnt-theme"]</code>.</td></tr>
+      <tr><td class="f">src/chart.ts, tabs.ts, quiz.ts…</td><td>One enhancer per interactive component. The HTML works without them; they only add behaviour.</td></tr>
+    </table></div>
+  </details>
+
+  <details class="pkg">
+    <summary><span class="pn">apps/server</span><span class="pd">Hono HTTP server: auth, pages API, reader, MCP, OAuth, sandbox origin, integrations. Postgres via Drizzle.</span></summary>
+    <div class="tw"><table>
+      <tr><th>File</th><th>What it does</th></tr>
+      <tr><td class="f">src/main.ts</td><td>Entry point: load env, connect (and <b>migrate</b>) the DB, first-run owner, serve on <code>PORT</code>.</td></tr>
+      <tr><td class="f">src/app.ts <small>1,146 lines</small></td><td><code>createApp()</code>: every route. Top of file: sandbox host switch, <code>onError</code> (turns errors into JSON), and the middleware that resolves the workspace and the viewer from a Bearer token or the <code>elemnt_token</code> cookie. Grep <code>app.get("</code> / <code>app.post("</code> to find a route.</td></tr>
+      <tr><td class="f">src/lib/config.ts</td><td>Every environment variable, validated with zod. A bad <code>.env</code> fails here at startup.</td></tr>
+      <tr><td class="f">src/db/schema.ts · drizzle/</td><td>22 tables and their SQL migrations. Migrations run automatically on every start (<code>db/connect.ts</code>).</td></tr>
+      <tr><td class="f">src/lib/blobs.ts · s3.ts</td><td>Content-addressed storage: on disk at <code>&lt;ELEMNT_BLOB_DIR&gt;/ab/&lt;sha256&gt;</code>, or in S3/R2 under <code>blobs/ab/&lt;sha256&gt;</code>.</td></tr>
+      <tr><td class="f">src/lib/crypto.ts</td><td>AES-GCM for secrets at rest (Anthropic keys, LinkedIn tokens). Changing <code>ELEMNT_SECRET_KEY</code> makes stored secrets unreadable.</td></tr>
+      <tr><td class="f">src/services/pages.ts</td><td>The write path: create, update (draft or publish), publish draft, restore, diff, locks, <code>readRevision</code>.</td></tr>
+      <tr><td class="f">src/services/suggestions.ts</td><td>AI and agent edits as suggestions: hunks, partial accept, three-way rebase onto a newer head.</td></tr>
+      <tr><td class="f">src/services/ai.ts</td><td>The only place that calls Claude (<code>claude-opus-5-5</code>, JSON-schema output, streaming). Maps API errors to HTTP errors.</td></tr>
+      <tr><td class="f">src/mcp.ts · services/oauth.ts</td><td>MCP server with 13 tools; OAuth 2.1 (PKCE, dynamic registration) whose tokens are ordinary API tokens.</td></tr>
+      <tr><td class="f">src/sandbox.ts · services/widgets.ts</td><td>The <code>/w/*</code> origin with its strict CSP, and the save-time widget scan, reports and blocks.</td></tr>
+      <tr><td class="f">src/render/page.ts · deck.ts</td><td>Reader HTML shell (CSP with nonce, theme, share bar) and present/carousel decks.</td></tr>
+      <tr><td class="f">src/services/repos.ts · github.ts</td><td>Repo explainer pages and the drift check, triggered by the GitHub webhook.</td></tr>
+      <tr><td class="f">src/services/ask, levels, library, insights, query, theme, views, linkedin, comments, search, workspace</td><td>One v2 or supporting feature each; the file's top comment says which.</td></tr>
+      <tr><td class="f">src/web.ts</td><td>Serves the built editor at <code>/app</code> with its CSP.</td></tr>
+      <tr><td class="f">src/bootstrap.ts · seed-demo.ts</td><td>CLI scripts: create the first owner and token; load demo pages.</td></tr>
+      <tr><td class="f">test/helpers.ts</td><td><code>setup()</code>: in-memory Postgres (PGlite), memory blobs, fake Claude. Every server test starts here.</td></tr>
+    </table></div>
+  </details>
+
+  <details class="pkg">
+    <summary><span class="pn">apps/web</span><span class="pd">The editor SPA (React + CodeMirror 6, Vite), served at /app.</span></summary>
+    <div class="tw"><table>
+      <tr><th>File</th><th>What it does</th></tr>
+      <tr><td class="f">src/App.tsx · router.ts</td><td>Shell, page tree, and <code>/app/:space/:path</code> routing.</td></tr>
+      <tr><td class="f">src/PageEditor.tsx</td><td>The heart of the editor: load, autosave every 1.5 s, publish, lock renewal every 30 s, conflict status, side panels.</td></tr>
+      <tr><td class="f">src/SourceEditor.tsx</td><td>CodeMirror setup, the <kbd>/</kbd> component menu, diagnostics gutter.</td></tr>
+      <tr><td class="f">src/useCompiler.ts · compile.worker.ts</td><td>Compiles in a Web Worker on every keystroke; only the latest result is kept.</td></tr>
+      <tr><td class="f">src/Preview.tsx</td><td>Renders compiled HTML and calls <code>enhance()</code>; registers widgets with the server first.</td></tr>
+      <tr><td class="f">src/api.ts</td><td><code>fetch</code> wrapper. Server errors become <code>ApiError(status, message, details)</code>.</td></tr>
+      <tr><td class="f">src/AssistBar, SuggestionsPanel, HistoryPanel, CommentsPanel, RepoPanel, LevelsPanel, InsightsPanel, ComponentMaker, Settings, StyleForm</td><td>One panel per feature, each talking to its <code>/api/...</code> routes.</td></tr>
+    </table></div>
+  </details>
+
+  <details class="pkg">
+    <summary><span class="pn">deploy · integrations · .github</span><span class="pd">Deploy wrappers, Claude Code skills, CI.</span></summary>
+    <div class="tw"><table>
+      <tr><th>Path</th><th>What it does</th></tr>
+      <tr><td class="f">apps/server/Dockerfile · docker-compose.yml</td><td>One image with server, editor and elements; compose adds Postgres 17 and volumes.</td></tr>
+      <tr><td class="f">deploy/cloudflare/</td><td>A Worker that forwards every request to one Cloudflare Container running that image, and passes env vars through.</td></tr>
+      <tr><td class="f">deploy/aws/elemnt.yaml</td><td>CloudFormation: VPC, App Runner, RDS Postgres, S3.</td></tr>
+      <tr><td class="f">integrations/claude-code/skills/</td><td><code>generate-docs</code>, <code>repo-explainer</code>, <code>elemnt-docs-style</code>: skills that drive the MCP tools.</td></tr>
+      <tr><td class="f">.github/workflows/ci.yml</td><td>install, build, typecheck, test on every PR.</td></tr>
+    </table></div>
+  </details>
+</section>
+
+<section id="find">
+  <h2>"Where is…?"</h2>
+  <div class="tw"><table>
+    <tr><th>You want to change</th><th>Open</th></tr>
+    <tr><td>How a component looks or what it outputs</td><td class="f">packages/core/src/components/&lt;name&gt;.ts</td></tr>
+    <tr><td>How a component behaves when clicked</td><td class="f">packages/elements/src/&lt;name&gt;.ts</td></tr>
+    <tr><td>Add a new component</td><td>component file + <code>components/index.ts</code> + tag in <code>html.ts</code> sanitize list (if it emits a custom element)</td></tr>
+    <tr><td>An API route</td><td class="f">apps/server/src/app.ts <small>(grep the path)</small></td></tr>
+    <tr><td>Save / publish / restore rules</td><td class="f">apps/server/src/services/pages.ts</td></tr>
+    <tr><td>Claude prompts and the model</td><td class="f">services/ai.ts, ask.ts, levels.ts, library.ts, repos.ts</td></tr>
+    <tr><td>What Claude Code can do over MCP</td><td class="f">apps/server/src/mcp.ts</td></tr>
+    <tr><td>Reader page HTML, CSP, share bar</td><td class="f">apps/server/src/render/page.ts</td></tr>
+    <tr><td>Editor autosave, locking, conflicts</td><td class="f">apps/web/src/PageEditor.tsx</td></tr>
+    <tr><td>A database column</td><td><code>db/schema.ts</code>, then <code>pnpm --filter @elemnt/server db:generate</code> for a new migration</td></tr>
+    <tr><td>An environment variable</td><td class="f">apps/server/src/lib/config.ts · .env.example · deploy/cloudflare/src/index.ts (PASSED list)</td></tr>
+  </table></div>
+</section>
+
+<section id="flows">
+  <h2>How requests flow</h2>
+  <p>Each flow lists the real call chain. When something breaks, find the flow, then walk it until the step that misbehaves.</p>
+
+  <h3>1 · Typing in the editor → live preview</h3>
+  <ol class="flow">
+    <li>CodeMirror changes <code>source</code> state. <span class="loc">SourceEditor.tsx → PageEditor.tsx</span></li>
+    <li><code>useCompiler(source)</code> posts <code>{id, source}</code> to the worker; stale replies are dropped. <span class="loc">useCompiler.ts</span></li>
+    <li>Worker runs <code>createElemnt().compile(source)</code>, the same function the server runs. <span class="loc">compile.worker.ts</span></li>
+    <li>Diagnostics go to the gutter; HTML goes to <code>Preview</code>, which registers widgets (<code>POST /api/widgets/preview</code>) and calls <code>enhance()</code>. <span class="loc">Preview.tsx</span></li>
+  </ol>
+
+  <h3>2 · Save and publish</h3>
+  <ol class="flow">
+    <li>1.5 s after typing stops, or on Publish, the editor sends <code>PUT /api/pages/:id</code> with <code>{source, baseRevisionId, publish}</code>. Publishing an unchanged draft uses <code>POST /api/pages/:id/publish</code> instead. <span class="loc">PageEditor.tsx save()</span></li>
+    <li>Middleware resolves the viewer from Bearer token or cookie; <code>pageWithAccess</code> requires the editor role. <span class="fail">401 / 403 / 404</span> <span class="loc">app.ts</span></li>
+    <li><code>updatePage</code> checks the edit lock <span class="fail">423</span> and that <code>baseRevisionId</code> is still the head <span class="fail">409</span>. <span class="loc">services/pages.ts</span></li>
+    <li><code>compileAndStore</code>: compile + widget scan. Errors block a publish but not a draft <span class="fail">422 with diagnostics</span>. <span class="loc">pages.ts → widgets.ts</span></li>
+    <li>Writes three blobs (source, HTML, Markdown) keyed by sha256, then stores widget code.</li>
+    <li>One transaction inserts the revision and moves <code>draftRevisionId</code> or <code>publishedRevisionId</code>, conditional on the head, so two concurrent saves can't both win <span class="fail">409</span>.</li>
+  </ol>
+
+  <h3>3 · A reader opens a page</h3>
+  <ol class="flow">
+    <li><code>GET /s/:space/:path</code>. Private space without sign-in redirects to <code>/login</code>. <span class="loc">app.ts, last route</span></li>
+    <li>Picks the view: <code>.md</code> suffix or <code>Accept: text/markdown</code> → raw Markdown; <code>?view=markdown</code>, <code>?view=present</code>, <code>?level=</code> are variants.</li>
+    <li>Records a view (failures only log <code>recordView failed</code>), reads the stored HTML from the blob store. Nothing is compiled at read time.</li>
+    <li><code>decorateWidgets</code>, then <code>renderShell</code> wraps it with theme CSS, a CSP nonce, share and edit links. <span class="loc">render/page.ts</span></li>
+    <li>The browser loads <code>/assets/elements.js</code> and calls <code>enhance()</code>. If that bundle isn't built, pages still render, just static.</li>
+  </ol>
+
+  <h3>4 · ⌘I: Claude edits the page</h3>
+  <ol class="flow">
+    <li><code>POST /api/pages/:id/assist</code> with instruction, <code>baseRevisionId</code> and optional selection. Unsaved changes <span class="fail">409</span>. <span class="loc">app.ts</span></li>
+    <li><code>aiClient</code> picks the workspace key, else <code>ANTHROPIC_API_KEY</code>. None <span class="fail">400 "Claude isn't set up"</span>.</li>
+    <li><code>anthropicProvider.json()</code> streams a JSON-schema reply with the authoring guide as cached system prompt. <span class="loc">services/ai.ts</span></li>
+    <li><code>createSuggestion</code> stores the proposed source as a blob. Nothing changes on the page yet. <span class="loc">services/suggestions.ts</span></li>
+    <li>Accept applies chosen hunks onto the current head; overlapping edits <span class="fail">409</span>. The result is saved as a <b>draft</b> through <code>updatePage</code>.</li>
+  </ol>
+
+  <h3>5 · Claude Code over MCP</h3>
+  <ol class="flow">
+    <li>Client calls <code>/mcp</code>; without a token it gets <span class="fail">401</span> and a <code>WWW-Authenticate</code> pointing at OAuth metadata. <span class="loc">app.ts /mcp, services/oauth.ts</span></li>
+    <li><code>handleMcp</code> builds a fresh MCP server per request for that viewer. <span class="loc">mcp.ts</span></li>
+    <li>Tools: <code>list_spaces list_pages search get_page get_authoring_guide get_style_guide validate get_runbook</code> read; <code>create_draft suggest_edit add_comment link_repo save_my_style</code> write, only as drafts, suggestions or comments.</li>
+    <li>Service errors return as tool errors with the message (and diagnostics) so the model can fix and retry.</li>
+  </ol>
+
+  <h3>6 · Widgets and runnable code</h3>
+  <ol class="flow">
+    <li>The sandbox origin is the same server under a second hostname. The first middleware compares <code>Host</code> and hands the request to <code>sandboxApp</code>, which only answers <code>/w/*</code>. <span class="loc">app.ts top, sandbox.ts</span></li>
+    <li>Locally, <code>localhost</code> and <code>127.0.0.1</code> are used as the two origins automatically. In production you must set <code>ELEMNT_SANDBOX_URL</code>, or widgets and Run are off.</li>
+  </ol>
+
+  <h3>7 · Repo drift check</h3>
+  <ol class="flow">
+    <li>GitHub push webhook → <code>/integrations/github/webhook</code>, signature checked with <code>GITHUB_WEBHOOK_SECRET</code>.</li>
+    <li>For each linked page, <code>checkDrift</code> runs in the background; failures log <code>drift check failed for …</code> and never reach the user. <span class="loc">services/repos.ts</span></li>
+    <li>Proposed edits land as suggestions with origin <code>drift</code>; accepting one re-pins the page to the new commit.</li>
+  </ol>
+</section>
+
+<section id="debug">
+  <h2>Something broke: the routine</h2>
+  <div class="ladder">
+    <div><div class="q">Step 1</div><h4>Is it up?</h4><p><code>curl localhost:8787/healthz</code>. <code>ok</code> means the server reaches Postgres; <code>503 database unreachable</code> means it doesn't.</p></div>
+    <div><div class="q">Step 2</div><h4>Read the server log</h4><p>Any unexpected error is printed with its stack by <code>onError</code>, and the client only sees "Something went wrong on our side."</p></div>
+    <div><div class="q">Step 3</div><h4>Find the layer</h4><p>Wrong output → core. Dead button → elements. Error JSON → server service. Blank editor → web console.</p></div>
+    <div><div class="q">Step 4</div><h4>Reproduce in a test</h4><p>Copy the closest test, make it fail, then fix. Server tests need no Docker.</p></div>
+  </div>
+
+  <h3>Where the logs are</h3>
+  <div class="tw"><table>
+    <tr><th>Running as</th><th>Command</th></tr>
+    <tr><td>Local dev</td><td><code>pnpm --filter @elemnt/server dev</code> prints to that terminal (tsx watch reloads on save)</td></tr>
+    <tr><td>Docker</td><td><code>docker compose logs -f server</code></td></tr>
+    <tr><td>Cloudflare</td><td><code>npx wrangler tail</code> from <code>deploy/cloudflare</code></td></tr>
+    <tr><td>AWS</td><td>CloudWatch log group <code>/aws/apprunner/elemnt/…/application</code></td></tr>
+    <tr><td>Browser (editor, reader)</td><td>DevTools console and Network tab. Failed API calls show the JSON <code>error</code> field.</td></tr>
+  </table></div>
+  <p>The server logs with plain <code>console.*</code>, so these few lines are everything it says on its own:</p>
+  <div class="tw"><table>
+    <tr><th>Log line</th><th>Meaning</th></tr>
+    <tr><td class="f">Elemnt listening on …</td><td>Started. Check the public URL and sandbox URL it prints.</td></tr>
+    <tr><td class="f">ELEMNT_SANDBOX_URL is not set…</td><td>Widgets and runnable code are off. Expected only if you don't use them.</td></tr>
+    <tr><td class="f">Editor not found at …</td><td><code>/app</code> won't exist. Build <code>apps/web</code> or fix <code>ELEMNT_WEB_DIR</code>.</td></tr>
+    <tr><td class="f">@elemnt/elements isn't built…</td><td>Pages render but nothing is interactive.</td></tr>
+    <tr><td class="f">First run: created workspace…</td><td>The bootstrap token. Shown once.</td></tr>
+    <tr><td class="f">recordView failed</td><td>View counting broke; the page still served.</td></tr>
+    <tr><td class="f">drift check failed for … / background task failed</td><td>Webhook work failed silently for the user.</td></tr>
+    <tr><td class="f">(a bare stack trace)</td><td>An unexpected exception in a route: a real bug. The top frames name the service file.</td></tr>
+  </table></div>
+
+  <h3>Call the API directly</h3>
+  <p>Taking the browser out of the loop tells you quickly whether a bug is in the server or the client.</p>
+<pre><code>T=your_api_token
+curl -s localhost:8787/api/me -H "Authorization: Bearer $T"
+<span class="c"># Compile any source on the server and see diagnostics, without saving:</span>
+curl -s localhost:8787/api/preview -H "Authorization: Bearer $T" -H 'Content-Type: application/json' \
+  -d '{"source":":::callout{type=warn}\nHi\n:::"}' | jq .diagnostics
+<span class="c"># What an agent sees for a page:</span>
+curl -s localhost:8787/s/demo/tour.md
+<span class="c"># Is Claude configured, and from where?</span>
+curl -s localhost:8787/api/ai -H "Authorization: Bearer $T"</code></pre>
+</section>
+
+<section id="errors">
+  <h2>Error codes</h2>
+  <p>Known failures throw <code>HttpError(status, message, details)</code> (<code>services/errors.ts</code>) and arrive as <code>{"error": "...", ...details}</code>. Search the code for the message text to find the exact line that threw it.</p>
+  <div class="tw"><table>
+    <tr><th>Status</th><th>Usually means</th><th>Look at</th></tr>
+    <tr><td><span class="pill p4">400</span></td><td>Bad input: page path, no draft to publish, Claude not set up, Anthropic key rejected</td><td>the message</td></tr>
+    <tr><td><span class="pill p4">401</span></td><td>No token or cookie, or the token isn't valid for this workspace</td><td><code>viewerForToken</code>, cookie <code>elemnt_token</code></td></tr>
+    <tr><td><span class="pill p4">403</span></td><td>Signed in but the role is too low (viewer &lt; editor &lt; admin)</td><td><code>requireRole</code></td></tr>
+    <tr><td><span class="pill p4">404</span></td><td>Missing, or exists in another workspace or a private space you can't read</td><td><code>readableSpace</code>, <code>pageWithAccess</code></td></tr>
+    <tr><td><span class="pill p4">409</span></td><td>Stale <code>baseRevisionId</code> (another tab saved, or a suggestion was accepted), or a suggestion conflict</td><td><code>details.currentRevisionId</code>; reload</td></tr>
+    <tr><td><span class="pill p4">422</span></td><td>Page has errors (<code>details.diagnostics</code> with line/column), Claude refused, or reply hit max tokens</td><td>diagnostics, or <code>ai.ts</code></td></tr>
+    <tr><td><span class="pill p4">423</span></td><td>Another session holds the edit lock (lasts 90 s, renewed every 30 s)</td><td><code>acquireLock</code>; close the other tab</td></tr>
+    <tr><td><span class="pill p4">429</span></td><td>Rate limit: Claude's on the key, or Elemnt's own per-hour limits on ask, signals, reports</td><td><code>limit()</code> in app.ts</td></tr>
+    <tr><td><span class="pill p5">500</span></td><td>Unhandled exception, including <code>Blob … is missing</code></td><td>server log stack trace</td></tr>
+    <tr><td><span class="pill p5">502</span></td><td>Claude API returned an error</td><td><code>ai.ts</code>; the status is in the message</td></tr>
+    <tr><td><span class="pill p4">400 + issues</span></td><td>A request body failed zod validation</td><td>the <code>issues</code> array names the field</td></tr>
+  </table></div>
+</section>
+
+<section id="failures">
+  <h2>Known weak spots</h2>
+  <p>Ranked by how likely each is to bite first, given what has and hasn't been run for real.</p>
+  <div class="note"><b>Never run against the real Claude API.</b> Every AI test uses a fake provider. The first live ⌘I, Ask, reading level, component maker or drift check is where to expect trouble: check the request shape in <code>anthropicProvider</code> (<code>betas</code>, <code>fallbacks</code>, <code>output_config</code>) against the current SDK, and log <code>err</code> in its catch block if you get a bare 502.</div>
+  <div class="tw"><table>
+    <tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+    <tr><td>Server exits at start with a ZodError</td><td>Missing <code>ELEMNT_SECRET_KEY</code> or invalid <code>DATABASE_URL</code></td><td>Fix <code>.env</code>; schema in <code>lib/config.ts</code></td></tr>
+    <tr><td>Start fails with "must be a different origin"</td><td><code>ELEMNT_SANDBOX_URL</code> equals the public URL</td><td>Use a second hostname, ideally another domain</td></tr>
+    <tr><td>Start fails in <code>migrate</code></td><td>A migration can't apply to the existing DB</td><td>Read the SQL in <code>drizzle/</code>; check the <code>drizzle.__drizzle_migrations</code> table</td></tr>
+    <tr><td>500 "Blob … is missing" after a redeploy</td><td>Blobs on a disk that didn't survive (container without a volume)</td><td>On Cloudflare and AWS set <code>ELEMNT_S3_*</code>; locally keep the compose <code>blobs</code> volume</td></tr>
+    <tr><td>Stored Anthropic or LinkedIn key stops working</td><td><code>ELEMNT_SECRET_KEY</code> changed, so old ciphertext can't be decrypted</td><td>Restore the old key, or re-enter the secrets</td></tr>
+    <tr><td>Widgets blank in production</td><td>Sandbox URL not set, or its DNS doesn't reach the same server</td><td>Check the startup log and the frame's network request</td></tr>
+    <tr><td>"Refused to load…" in the browser console</td><td>CSP</td><td>Reader: <code>render/page.ts</code>; editor: <code>web.ts</code>; widgets: <code>sandbox.ts</code></td></tr>
+    <tr><td>Python Run blocks never finish</td><td>Pyodide download from jsDelivr (not verified end to end)</td><td>Network tab in the sandbox frame; <code>PYODIDE</code> in <code>sandbox.ts</code></td></tr>
+    <tr><td>Editor via Vite (<code>:5173</code>) can't reach MCP or OAuth</td><td>The Vite proxy forwards only <code>/api /s /login /integrations /assets</code></td><td>Use <code>:8787</code> for MCP, or add the paths in <code>vite.config.ts</code></td></tr>
+    <tr><td>"Someone else is editing" with only you</td><td>A second tab, or a lock left by a closed tab</td><td>Wait 90 s, or clear <code>locked_by</code> on the page row</td></tr>
+    <tr><td>Saved but readers see the old page</td><td>Autosave writes a draft; readers see only the published revision</td><td>Press Publish; check <code>draft_revision_id</code></td></tr>
+    <tr><td>Component output missing an attribute or tag</td><td>Stripped by the sanitizer</td><td>Add it to <code>elemntSanitizeSchema</code> in <code>core/src/html.ts</code></td></tr>
+    <tr><td>LinkedIn posting fails</td><td>App products not approved, or <code>LINKEDIN_API_VERSION</code> retired</td><td><code>services/linkedin.ts</code>; bump the YYYYMM version</td></tr>
+  </table></div>
+</section>
+
+<section id="tests">
+  <h2>Tests</h2>
+  <p>Server tests run against an in-memory Postgres (PGlite) with migrations applied, an in-memory blob store and a fake Claude, so no Docker and no API key are needed. They also import core from source, so core changes don't need a rebuild.</p>
+<pre><code>pnpm test                                              <span class="c"># everything</span>
+pnpm --filter @elemnt/server test                      <span class="c"># one package</span>
+pnpm --filter @elemnt/server exec vitest run test/write-path.test.ts
+pnpm --filter @elemnt/server exec vitest run -t "stale"   <span class="c"># by test name</span>
+pnpm --filter @elemnt/core exec vitest run -u           <span class="c"># accept intended snapshot changes</span>
+pnpm typecheck                                         <span class="c"># CI also runs this; build first</span></code></pre>
+  <div class="tw"><table>
+    <tr><th>Test file</th><th>Covers</th><th>Tests</th></tr>
+    <tr><td class="f">server/test/write-path.test.ts</td><td>Drafts, publish, stale saves, locks, restore, diff</td><td>16</td></tr>
+    <tr><td class="f">server/test/server.test.ts</td><td>Reader, Markdown views, llms.txt, auth, spaces</td><td>15</td></tr>
+    <tr><td class="f">server/test/widgets.test.ts</td><td>Sandbox origin, CSP, widget scan, reports, blocks</td><td>23</td></tr>
+    <tr><td class="f">server/test/v2.test.ts</td><td>Ask, reading levels, component maker, heatmap, present mode</td><td>16</td></tr>
+    <tr><td class="f">server/test/themes.test.ts</td><td>Page styles, org theme, dark mode</td><td>12</td></tr>
+    <tr><td class="f">server/test/mcp.test.ts</td><td>MCP tools and OAuth</td><td>11</td></tr>
+    <tr><td class="f">server/test/ai.test.ts</td><td>⌘I assist, suggestions, partial accept, rebase</td><td>9</td></tr>
+    <tr><td class="f">server/test/repos.test.ts</td><td>Explainer links, webhook, drift</td><td>9</td></tr>
+    <tr><td class="f">server/test/linkedin · s3 · web · deploy</td><td>LinkedIn OAuth and posting, S3 signing, editor serving, deploy config</td><td>19</td></tr>
+    <tr><td class="f">core/test/*.test.ts</td><td>Compile snapshots for every component, styles, v2 syntax</td><td>67</td></tr>
+    <tr><td class="f">elements/test · web/test</td><td>Hydration in jsdom; editor router</td><td>10</td></tr>
+  </table></div>
+  <p>To pin down a bug: copy the closest test, use <code>setup()</code> from <code>test/helpers.ts</code> to get <code>call()</code> and an owner token, reproduce the failing request, then fix. For a rendering bug, a core test with the page source is enough.</p>
+</section>
+
+<section id="data">
+  <h2>Looking at data</h2>
+<pre><code>docker compose exec postgres psql -U elemnt
+<span class="c">-- A page's state: which revision is live, which is a draft, who holds the lock</span>
+select id, path, published_revision_id, draft_revision_id, locked_by, locked_until from pages;
+<span class="c">-- A page's history, newest first</span>
+select id, parent_revision_id, message, created_at from revisions where page_id = 'pg_…' order by created_at desc;
+<span class="c">-- Open suggestions and where they came from (assist, mcp, drift, ask)</span>
+select id, origin, status, summary from suggestions where status = 'open';</code></pre>
+  <p>Revision rows hold hashes, not text. To read a body from disk: <code>cat cat data/blobs/&lt;first two hex chars&gt;/&lt;hash&gt;</code>lt;ELEMNT_BLOB_DIRcat data/blobs/&lt;first two hex chars&gt;/&lt;hash&gt;</code>gt;/cat data/blobs/&lt;first two hex chars&gt;/&lt;hash&gt;</code>lt;first two hex charscat data/blobs/&lt;first two hex chars&gt;/&lt;hash&gt;</code>gt;/cat data/blobs/&lt;first two hex chars&gt;/&lt;hash&gt;</code>lt;hashcat data/blobs/&lt;first two hex chars&gt;/&lt;hash&gt;</code>gt;</code> (in Docker that is <code>/data/blobs</code> inside the server container). Or use <code>GET /api/revisions/:rev/source</code> (also <code>html</code> and <code>markdown</code>).</p>
+  <p>Ids carry their type as a prefix, so a stray id in a log tells you what it is: <code>ws_</code> workspace, <code>usr_</code> user, <code>tok_</code> token, <code>spc_</code> space, <code>pg_</code> page, <code>rev_</code> revision, <code>sug_</code> suggestion, <code>cmt_</code> comment, <code>cmp_</code> library component, <code>oac_</code> OAuth client, <code>lip_</code> LinkedIn post, <code>q_</code> reader question.</p>
+</section>
+
+<footer>Generated from a read of <code>feat/m7-deploy</code> at 9a67d60 on 2026-10-26, which contains main plus PRs #9, #10 and #11. Build and all 173 tests passed on that commit. Line counts and file lists will drift as the code changes.</footer>
+</main>
+</div>
+</body>
+</html>

@@ -27,3 +27,7 @@ pnpm build
 ```
 
 Requires Node 22+ and pnpm 10.
+
+## Debugging
+
+[`docs/field-guide.html`](docs/field-guide.html) maps the codebase (every package and file), traces how saves, reads, ⌘I and MCP requests flow through it, and gives a routine for when something breaks: health check, where the logs are, error codes, known weak spots and how to target tests. Open it in a browser after cloning. It was written against `feat/m7-deploy`, so it also covers the code in PRs #9–#11.
