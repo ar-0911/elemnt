@@ -31,6 +31,8 @@ const schema = z.object({
   /** Page styles load their fonts from Google Fonts; "off" keeps every font local (system font stacks). */
   ELEMNT_FONTS: z.enum(["google", "off"]).default("google"),
   ELEMNT_WORKSPACE: z.string().default("default"),
+  /** Who can create an account once the workspace exists: "invite" (with an invite link) or "open" (anyone, as a viewer). */
+  ELEMNT_SIGNUP: z.enum(["invite", "open"]).default("invite"),
   /**
    * For hosts where you can't run the bootstrap script (App Runner, Cloudflare
    * Containers): on the first start, when the workspace doesn't exist yet,
@@ -56,6 +58,8 @@ export type Env = z.infer<typeof schema>;
 export interface Config {
   publicUrl: string;
   workspaceSlug: string;
+  /** Anyone may sign up (as a viewer), not only people with an invite link. */
+  signupOpen?: boolean;
   secretKey: string;
   /** Origin for sandboxed frames; see ELEMNT_SANDBOX_URL. */
   sandboxUrl?: string;
@@ -94,6 +98,7 @@ export function configFromEnv(env: Env): Config {
     widgetSelfVerify: env.ELEMNT_WIDGET_SELF_VERIFY === "true",
     fonts: env.ELEMNT_FONTS === "google",
     workspaceSlug: env.ELEMNT_WORKSPACE,
+    signupOpen: env.ELEMNT_SIGNUP === "open",
     secretKey: env.ELEMNT_SECRET_KEY,
     github: {
       ...(env.GITHUB_APP_ID ? { appId: env.GITHUB_APP_ID } : {}),

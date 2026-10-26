@@ -110,7 +110,7 @@ describe("OAuth for MCP clients", () => {
     expect(anon.headers.get("location")).toMatch(/^\/login\?next=%2Foauth%2Fauthorize/);
 
     const consent = await t.call(`/oauth/authorize?${q}`, { token: t.ownerToken });
-    expect(await consent.text()).toContain("Connect Claude to Elemnt?");
+    expect(await consent.text()).toContain("Connect Claude?");
 
     const form = new URLSearchParams({ ...Object.fromEntries(q), decision: "allow" });
     const approved = await t.call("/oauth/authorize", { method: "POST", token: t.ownerToken, headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: form.toString() });

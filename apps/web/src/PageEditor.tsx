@@ -14,6 +14,9 @@ import { SourceEditor, type SourceEditorHandle } from "./SourceEditor";
 import { useCompiler } from "./useCompiler";
 import { presets } from "@elemnt/core";
 import { withPreset } from "./look";
+import type { Space } from "./api";
+import { checklistFlag } from "./Home";
+import { Icon, local, useToast, type IconName } from "./ui";
 
 type Mode = "split" | "source" | "preview";
 type Panel = "none" | "history" | "comments" | "suggestions" | "repo" | "insights" | "levels";
@@ -25,10 +28,21 @@ const LOCK_RENEW_MS = 30_000;
 interface Props {
   pageId: string;
   canEdit: boolean;
+  space: Space | undefined;
   onChanged(): void;
 }
 
-export function PageEditor({ pageId, canEdit, onChanged }: Props) {
+const PANELS: { id: Exclude<Panel, "none">; label: string; icon: IconName; hint: string }[] = [
+  { id: "history", label: "History", icon: "history", hint: "Every saved version; compare and restore" },
+  { id: "comments", label: "Comments", icon: "comment", hint: "Discuss the page; select text in the preview to quote it" },
+  { id: "suggestions", label: "Suggestions", icon: "review", hint: "Edits proposed by Claude or teammates, to accept or reject" },
+  { id: "insights", label: "Insights", icon: "insights", hint: "Where readers get stuck, and what they ask" },
+  { id: "levels", label: "Levels", icon: "levels", hint: "Simpler and more expert versions of this page" },
+  { id: "repo", label: "Repo", icon: "repo", hint: "Link this page to a GitHub repo and catch drift" },
+];
+
+export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
+  const toast = useToast();
   const [opened, setOpened] = useState<OpenedPage>();
   const [source, setSource] = useState("");
   const [lockedOut, setLockedOut] = useState<string>();
@@ -74,7 +88,8 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
 
   useEffect(() => {
     void load();
-  }, [load]);
+    if (canEdit) local.set(checklistFlag("preview"), "1");
+  }, [load, canEdit]);
 
   // One editor at a time: take the lock, renew it, release it when leaving.
   useEffect(() => {
@@ -119,7 +134,11 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
           },
         );
         setStatus(publish ? { kind: "published", text: "Published" } : { kind: "saved", text: res.ok ? "Draft saved" : "Draft saved (has errors)" });
-        if (publish) onChanged();
+        if (publish) {
+          onChanged();
+          local.set(checklistFlag("publish"), "1");
+          toast("Published. Readers see the new version now.");
+        }
       } catch (e) {
         const err = e as ApiError;
         if (err.status === 409) setStatus({ kind: "conflict", text: "Someone else saved this page. Reload to see their changes." });
@@ -127,7 +146,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
         else setStatus({ kind: "error", text: err.message });
       }
     },
-    [pageId, readOnly, source, onChanged, opened],
+    [pageId, readOnly, source, onChanged, opened, toast],
   );
 
   const saveSerial = useCallback(
@@ -197,72 +216,86 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
 
   return (
     <main className="editor-main">
-      <header className="toolbar">
-        <div className="title">
+      <header className="page-head">
+        <div className="page-title">
+          <p className="crumbs">
+            {space?.name ?? "Space"} <span aria-hidden="true">/</span> {opened.page.path}
+          </p>
           <h1>{opened.page.title}</h1>
-          <a href={opened.url} target="_blank" rel="noreferrer" className="sub">
-            {new URL(opened.url).pathname}
-          </a>
         </div>
-        <div className="actions">
-          <span className={`status ${status.kind}`} role="status">
-            {dirty && status.kind !== "saving" ? "Unsaved changes" : status.text}
+        <div className="page-actions">
+          <span className={`state ${status.kind}${dirty ? " dirty" : ""}`} role="status" title={status.text}>
+            <i aria-hidden="true" />
+            {dirty && status.kind !== "saving" ? "Unsaved" : status.kind === "idle" ? (opened.page.draftRevisionId ? (opened.page.publishedRevisionId ? "Unpublished changes" : "Draft") : "Published") : status.text}
           </span>
-          {errors.length > 0 && <span className="status error">{errors.length} error{errors.length > 1 ? "s" : ""}</span>}
-          {canEdit && (
-            <select
-              className="style-pick"
-              aria-label="Page style"
-              title="Page style (the style: line in the frontmatter)"
-              disabled={readOnly}
-              value={compiled?.style?.preset ?? ""}
-              onChange={(e) => editor.current?.replaceAll(withPreset(source, e.target.value || undefined))}
-            >
-              <option value="">Style: workspace default</option>
-              {Object.values(presets).map((p) => (
-                <option key={p.name} value={p.name}>
-                  Style: {p.label}
-                </option>
-              ))}
-            </select>
+          {errors.length > 0 && (
+            <span className="state error">
+              <i aria-hidden="true" />
+              {errors.length} error{errors.length > 1 ? "s" : ""}
+            </span>
           )}
-          <div className="seg" role="group" aria-label="Layout">
-            {(["source", "split", "preview"] as Mode[]).map((m) => (
-              <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
-                {m[0]!.toUpperCase() + m.slice(1)}
-              </button>
-            ))}
-          </div>
-          <button type="button" className={`btn ghost${panel === "history" ? " on" : ""}`} onClick={() => setPanel(panel === "history" ? "none" : "history")}>
-            History
-          </button>
+          {opened.page.publishedRevisionId && (
+            <a className="btn ghost" href={opened.url} target="_blank" rel="noreferrer" title="Open the published page in a new tab">
+              <Icon name="external" size={16} /> View
+            </a>
+          )}
           {canEdit && (
-            <button type="button" className="btn ghost" disabled={readOnly} onClick={openAssist} title="⌘I">
-              Ask Claude
+            <button type="button" className="btn" data-tour="ask" disabled={readOnly} onClick={openAssist} title="Ask Claude to write or rewrite (⌘I)">
+              <Icon name="sparkle" size={16} /> Ask Claude
             </button>
           )}
-          <button type="button" className={`btn ghost${panel === "suggestions" ? " on" : ""}`} onClick={() => setPanel(panel === "suggestions" ? "none" : "suggestions")}>
-            Suggestions
-          </button>
-          <button type="button" className={`btn ghost${panel === "comments" ? " on" : ""}`} onClick={() => setPanel(panel === "comments" ? "none" : "comments")}>
-            Comments
-          </button>
-          <button type="button" className={`btn ghost${panel === "insights" ? " on" : ""}`} onClick={() => setPanel(panel === "insights" ? "none" : "insights")}>
-            Insights
-          </button>
-          <button type="button" className={`btn ghost${panel === "levels" ? " on" : ""}`} onClick={() => setPanel(panel === "levels" ? "none" : "levels")}>
-            Levels
-          </button>
-          <button type="button" className={`btn ghost${panel === "repo" ? " on" : ""}`} onClick={() => setPanel(panel === "repo" ? "none" : "repo")}>
-            Repo
-          </button>
           {canEdit && (
-            <button type="button" className="btn primary" disabled={readOnly || errors.length > 0} onClick={() => void saveSerial(true)} title="⌘Enter">
+            <button type="button" className="btn primary" data-tour="publish" disabled={readOnly || errors.length > 0} onClick={() => void saveSerial(true)} title="Publish (⌘↵)">
               Publish
             </button>
           )}
         </div>
       </header>
+      <div className="page-toolbar">
+        <div className="seg" role="group" aria-label="Layout">
+          {(
+            [
+              ["source", "Write"],
+              ["split", "Split"],
+              ["preview", "Preview"],
+            ] as [Mode, string][]
+          ).map(([m, label]) => (
+            <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)} title={`${label} (⌘\\ to switch)`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {canEdit && (
+          <label className="field-inline">
+            <span>Style</span>
+            <select
+              className="style-pick"
+              title="The page's look (the style: line in the frontmatter)"
+              disabled={readOnly}
+              value={compiled?.style?.preset ?? ""}
+              onChange={(e) => editor.current?.replaceAll(withPreset(source, e.target.value || undefined))}
+            >
+              <option value="">Workspace default</option>
+              {Object.values(presets).map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <span className="spacer" />
+        {mode !== "source" && (
+          <div className="seg small" role="group" aria-label="Preview as">
+            <button type="button" aria-pressed={view === "page"} onClick={() => setView("page")} title="The page as people see it">
+              Page
+            </button>
+            <button type="button" aria-pressed={view === "markdown"} onClick={() => setView("markdown")} title="The Markdown that Claude and other agents read">
+              Markdown
+            </button>
+          </div>
+        )}
+      </div>
       {assist.open && (
         <AssistBar
           hasSelection={Boolean(assist.selection)}
@@ -281,6 +314,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
           {status.text} <button type="button" className="link" onClick={() => void load()}>Reload</button>
         </p>
       )}
+      <div className="editor-body">
       <div className={`workspace mode-${mode}${panel !== "none" ? " with-panel" : ""}`}>
         <SourceEditor
           ref={editor}
@@ -294,15 +328,7 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
             if (p && mode === "split") p.scrollTop = ratio * (p.scrollHeight - p.clientHeight);
           }}
         />
-        <div className="right">
-          <div className="seg small" role="group" aria-label="Preview as">
-            <button type="button" aria-pressed={view === "page"} onClick={() => setView("page")}>
-              Page
-            </button>
-            <button type="button" aria-pressed={view === "markdown"} onClick={() => setView("markdown")}>
-              Markdown
-            </button>
-          </div>
+        <div className="right" data-tour="preview">
           {view === "page" ? (
             <>
               {widgetFindings.length > 0 && (
@@ -353,6 +379,15 @@ export function PageEditor({ pageId, canEdit, onChanged }: Props) {
         {panel === "levels" && <LevelsPanel pageId={pageId} published={Boolean(opened.page.publishedRevisionId)} />}
         {panel === "repo" && <RepoPanel pageId={pageId} canEdit={canEdit} onSuggested={() => setSuggestionsKey((k) => k + 1)} />}
         {panel === "comments" && <CommentsPanel pageId={pageId} quote={quote} clearQuote={() => setQuote(undefined)} />}
+      </div>
+      <nav className="rail" aria-label="Page tools" data-tour="rail">
+        {PANELS.map((p) => (
+          <button key={p.id} type="button" aria-pressed={panel === p.id} title={p.hint} onClick={() => setPanel(panel === p.id ? "none" : p.id)}>
+            <Icon name={p.icon} size={18} />
+            <span>{p.label}</span>
+          </button>
+        ))}
+      </nav>
       </div>
       {making && (
         <ComponentMaker

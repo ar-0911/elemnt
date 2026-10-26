@@ -1,39 +1,54 @@
 import { mountThemeToggle } from "@elemnt/elements";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, getMe, type Me, type Space, type TreePage } from "./api";
+import { checklistFlag, Home } from "./Home";
 import { PageEditor } from "./PageEditor";
 import { Palette } from "./Palette";
-import { Settings } from "./Settings";
+import { Settings, type SettingsTab } from "./Settings";
 import { navigate, useRoute } from "./router";
 import { withStyle } from "./look";
+import { restartTour, Tour } from "./Tour";
+import { Dialog, Icon, local, Menu, Toasts, useToast, type IconName } from "./ui";
 
-const NEW_PAGE = (title: string) => `---
-title: ${title}
-summary: One line on what this page explains.
----
+const NEW_PAGE = (title: string, summary: string) => `---
+title: ${title.replace(/\n/g, " ")}
+${summary.trim() ? `summary: ${summary.replace(/\n/g, " ")}\n` : ""}---
 
-Start with why this matters.
+Start with why this matters to the reader.
 
 :::callout{type=tip}
-Type / at the start of a line to insert a component.
+Start a line with / to insert a component: callouts, steps, charts, diagrams and more.
 :::
 `;
 
+const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9/]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/(^-|-$)/g, "");
+
+const SPACE_ICON: Record<Space["visibility"], IconName> = { public: "globe", workspace: "team", private: "lock" };
+
 function Tree({ pages, space, current }: { pages: TreePage[]; space: string; current: string | undefined }) {
+  if (!pages.length) return <p className="tree-empty">No pages yet.</p>;
   return (
     <ul className="tree">
       {pages.map((p) => (
-        <li key={p.id} style={{ paddingLeft: `${(p.path.split("/").length - 1) * 14}px` }}>
+        <li key={p.id} style={{ paddingLeft: `${(p.path.split("/").length - 1) * 12}px` }}>
           <a
             href={`/app/${space}/${p.path}`}
             aria-current={p.path === current ? "page" : undefined}
+            title={p.title}
             onClick={(e) => {
               e.preventDefault();
               navigate(space, p.path);
             }}
           >
-            {p.title}
-            {!p.published ? <span className="dot draft" title="Not published yet" /> : p.hasDraft ? <span className="dot edited" title="Has unpublished changes" /> : null}
+            <span className="tree-title">{p.title}</span>
+            {!p.published ? <span className="dot draft" title="Draft, not published yet" /> : p.hasDraft ? <span className="dot edited" title="Has unpublished changes" /> : null}
           </a>
         </li>
       ))}
@@ -41,36 +56,202 @@ function Tree({ pages, space, current }: { pages: TreePage[]; space: string; cur
   );
 }
 
-/** Light/dark switch for the editor; the choice is shared with the reader. */
+/** Light/dark switch; the choice is shared with the reader. */
 function ThemeButton() {
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (ref.current) mountThemeToggle(ref.current);
   }, []);
-  return <button ref={ref} type="button" className="btn ghost theme-btn" />;
+  return <button ref={ref} type="button" className="icon-btn theme-btn" />;
+}
+
+function NewPageDialog({ space, onClose, onCreate }: { space: Space; onClose(): void; onCreate(path: string, title: string, summary: string): Promise<void> }) {
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+  const [path, setPath] = useState("");
+  const [edited, setEdited] = useState(false);
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const finalPath = edited ? path : slugify(title);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim() || !finalPath) return;
+    setBusy(true);
+    try {
+      await onCreate(finalPath, title.trim(), summary.trim());
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog title={`New page in ${space.name}`} onClose={onClose}>
+      <form className="form" onSubmit={(e) => void submit(e)}>
+        <label>
+          Title
+          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Deploying the billing service" required />
+        </label>
+        <label>
+          One-line summary <span className="hint">Optional. Shown in search, link previews and to agents.</span>
+          <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What will the reader be able to do after reading?" />
+        </label>
+        <label>
+          Address
+          <div className="prefixed">
+            <span>/{space.slug}/</span>
+            <input
+              value={finalPath}
+              onChange={(e) => {
+                setEdited(true);
+                setPath(slugify(e.target.value));
+              }}
+              placeholder="deploying-billing"
+              aria-describedby="path-hint"
+            />
+          </div>
+          <span className="hint" id="path-hint">
+            Use / to nest it under another page, like guides/deploy.
+          </span>
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-actions">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={busy || !title.trim() || !finalPath}>
+            {busy ? "Creating…" : "Create page"}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function NewSpaceDialog({ onClose, onCreate }: { onClose(): void; onCreate(name: string, visibility: Space["visibility"]): Promise<void> }) {
+  const [name, setName] = useState("");
+  const [visibility, setVisibility] = useState<Space["visibility"]>("workspace");
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const options: { value: Space["visibility"]; icon: IconName; title: string; body: string }[] = [
+    { value: "workspace", icon: "team", title: "Workspace", body: "Everyone in this workspace can read it. Good for internal docs." },
+    { value: "public", icon: "globe", title: "Public", body: "Anyone with the link can read published pages. Good for READMEs and open source." },
+  ];
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await onCreate(name.trim(), visibility);
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog title="New space" onClose={onClose}>
+      <form className="form" onSubmit={(e) => void submit(e)}>
+        <p className="hint">A space groups related pages, like "Engineering" or "API docs".</p>
+        <label>
+          Name
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Engineering" required />
+        </label>
+        <fieldset className="choices">
+          <legend>Who can read it</legend>
+          {options.map((o) => (
+            <label key={o.value} className={`choice${visibility === o.value ? " on" : ""}`}>
+              <input type="radio" name="visibility" value={o.value} checked={visibility === o.value} onChange={() => setVisibility(o.value)} />
+              <Icon name={o.icon} />
+              <span>
+                <strong>{o.title}</strong>
+                <span className="hint">{o.body}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-actions">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={busy || !slugify(name)}>
+            {busy ? "Creating…" : "Create space"}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+const SHORTCUTS: [string, string][] = [
+  ["⌘K", "Search and jump to a page"],
+  ["⌘I", "Ask Claude about the selection"],
+  ["⌘S", "Save draft now (it also saves as you type)"],
+  ["⌘↵", "Publish"],
+  ["⌘\\", "Switch between write, split and preview"],
+  ["/", "Insert a component (at the start of a line)"],
+  ["?", "Show these shortcuts"],
+];
+
+function ShortcutsDialog({ onClose }: { onClose(): void }) {
+  return (
+    <Dialog title="Keyboard shortcuts" onClose={onClose}>
+      <p className="hint">On Windows and Linux, use Ctrl instead of ⌘.</p>
+      <dl className="shortcuts">
+        {SHORTCUTS.map(([k, v]) => (
+          <div key={k}>
+            <dt>
+              <kbd>{k}</kbd>
+            </dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </Dialog>
+  );
+}
+
+function Initials({ me }: { me: Me | undefined }) {
+  const src = me?.name || me?.username || me?.email || "?";
+  const letters = src
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("");
+  return <span className="avatar" aria-hidden="true">{letters}</span>;
 }
 
 export function App() {
+  return (
+    <Toasts>
+      <Shell />
+    </Toasts>
+  );
+}
+
+function Shell() {
   const route = useRoute();
+  const toast = useToast();
   const [me, setMe] = useState<Me>();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [pages, setPages] = useState<TreePage[]>([]);
   const [palette, setPalette] = useState(false);
-  const [settings, setSettings] = useState(false);
-  const [error, setError] = useState<string>();
+  const [settings, setSettings] = useState<SettingsTab | false>(false);
+  const [dialog, setDialog] = useState<"page" | "space" | "keys">();
 
   useEffect(() => {
     getMe()
       .then(setMe)
       .catch((e: ApiError) => {
         if (e.status === 401) location.href = `/login?next=${encodeURIComponent(location.pathname + location.search)}`;
-        else setError(e.message);
+        else toast(e.message, "error");
       });
     void api.get<Space[]>("/api/spaces").then((s) => {
       setSpaces(s);
-      if (!parseSpace() && s[0]) navigate(s[0].slug);
+      if (!location.pathname.replace(/^\/app\/?/, "") && s[0]) navigate(s[0].slug);
     });
-  }, []);
+    // Arriving from sign-up: say hello once, then tidy the address bar.
+    if (new URLSearchParams(location.search).has("welcome")) history.replaceState(null, "", location.pathname);
+  }, [toast]);
 
   const loadTree = useCallback(() => {
     if (route.space) void api.get<{ pages: TreePage[] }>(`/api/spaces/${route.space}/tree`).then((t) => setPages(t.pages));
@@ -79,10 +260,11 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && e.target.closest("input, textarea, select, .cm-editor, [contenteditable]");
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPalette((p) => !p);
-      }
+      } else if (e.key === "?" && !typing && !e.metaKey && !e.ctrlKey) setDialog("keys");
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -91,81 +273,127 @@ export function App() {
   const canEdit = me?.role === "owner" || me?.role === "admin" || me?.role === "editor";
   const canAdmin = me?.role === "owner" || me?.role === "admin";
   const current = pages.find((p) => p.path === route.path);
+  const space = spaces.find((s) => s.slug === route.space);
 
-  async function newPage() {
-    const path = prompt("Path for the new page (e.g. guides/deploy)")?.trim().toLowerCase();
-    if (!path || !route.space) return;
-    const title = path.split("/").pop()!.replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase());
-    try {
-      await api.post(`/api/spaces/${route.space}/pages`, { path, source: me?.style ? withStyle(NEW_PAGE(title), me.style) : NEW_PAGE(title), draft: true });
-      loadTree();
-      navigate(route.space, path);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  async function createPage(path: string, title: string, summary: string) {
+    if (!route.space) return;
+    const source = NEW_PAGE(title, summary);
+    await api.post(`/api/spaces/${route.space}/pages`, { path, source: me?.style ? withStyle(source, me.style) : source, draft: true });
+    local.set(checklistFlag("page"), "1");
+    setDialog(undefined);
+    loadTree();
+    navigate(route.space, path);
+    toast("Page created. It's a draft until you publish it.");
   }
 
-  async function newSpace() {
-    const name = prompt("Name of the new space")?.trim();
-    if (!name) return;
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const visibility = confirm("Make this space public? Anyone with the link can read published pages.") ? "public" : "workspace";
-    try {
-      await api.post("/api/spaces", { slug, name, visibility });
-      setSpaces(await api.get<Space[]>("/api/spaces"));
-      navigate(slug);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  async function createSpace(name: string, visibility: Space["visibility"]) {
+    const slug = slugify(name).replace(/\//g, "-");
+    await api.post("/api/spaces", { slug, name, visibility });
+    setSpaces(await api.get<Space[]>("/api/spaces"));
+    setDialog(undefined);
+    navigate(slug);
+    toast(`Created ${name}.`);
+  }
+
+  async function signOut() {
+    await fetch("/logout", { method: "POST", credentials: "same-origin" });
+    location.href = "/login";
   }
 
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">Elemnt</div>
-        <label className="sr" htmlFor="space">Space</label>
-        <select id="space" value={route.space ?? ""} onChange={(e) => navigate(e.target.value)}>
-          {spaces.map((s) => (
-            <option key={s.id} value={s.slug}>
-              {s.name} {s.visibility === "public" ? "(public)" : ""}
-            </option>
-          ))}
-        </select>
-        <button type="button" className="search-btn" onClick={() => setPalette(true)}>
-          Search <kbd>⌘K</kbd>
-        </button>
-        {route.space && <Tree pages={pages} space={route.space} current={route.path} />}
-        <div className="side-actions">
-          {canEdit && route.space && (
-            <button type="button" className="btn" onClick={() => void newPage()}>
-              New page
-            </button>
-          )}
-          {canAdmin && (
-            <button type="button" className="btn ghost" onClick={() => void newSpace()}>
-              New space
-            </button>
-          )}
-          <button type="button" className="btn ghost" onClick={() => setSettings(true)}>
-            Settings
-          </button>
+      <aside className="sidebar" data-tour="sidebar">
+        <div className="side-head">
+          <a className="brand" href="/app/">
+            <svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true">
+              <defs>
+                <linearGradient id="brand-g" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stopColor="#6366f1" />
+                  <stop offset="1" stopColor="#06b6d4" />
+                </linearGradient>
+              </defs>
+              <rect width="32" height="32" rx="9" fill="url(#brand-g)" />
+              <path d="M10 9h12M10 16h9M10 23h12M10 9v14" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+            </svg>
+            Elemnt
+          </a>
           <ThemeButton />
         </div>
-        <div className="me">{me?.email}</div>
+
+        {canEdit && route.space && (
+          <button type="button" className="btn primary block" data-tour="new-page" onClick={() => setDialog("page")}>
+            <Icon name="plus" size={16} /> New page
+          </button>
+        )}
+        <button type="button" className="search-btn" onClick={() => setPalette(true)} {...(!canEdit ? { "data-tour": "new-page" } : {})}>
+          <Icon name="search" size={16} />
+          <span>Search</span>
+          <kbd>⌘K</kbd>
+        </button>
+
+        <nav className="side-section" aria-label="Spaces">
+          <div className="side-label">
+            Spaces
+            {canAdmin && (
+              <button type="button" className="icon-btn small" aria-label="New space" title="New space" onClick={() => setDialog("space")}>
+                <Icon name="plus" size={14} />
+              </button>
+            )}
+          </div>
+          <ul className="spaces">
+            {spaces.map((s) => (
+              <li key={s.id}>
+                <a href={`/app/${s.slug}`} aria-current={s.slug === route.space && !route.path ? "page" : s.slug === route.space ? "true" : undefined} onClick={(e) => (e.preventDefault(), navigate(s.slug))}>
+                  <Icon name={SPACE_ICON[s.visibility]} size={15} />
+                  <span>{s.name}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        {route.space && (
+          <nav className="side-section grow" aria-label={`Pages in ${space?.name ?? route.space}`}>
+            <div className="side-label">Pages</div>
+            <Tree pages={pages} space={route.space} current={route.path} />
+          </nav>
+        )}
+
+        <div className="side-foot">
+          <Menu
+            label="Account and help"
+            up
+            trigger={
+              <>
+                <Initials me={me} />
+                <span className="who">
+                  <strong>{me?.name || me?.username || "You"}</strong>
+                  <span>{me?.role ? `${me.role[0]!.toUpperCase()}${me.role.slice(1)}` : ""}</span>
+                </span>
+              </>
+            }
+            items={[
+              { label: "Settings", icon: "settings", onSelect: () => setSettings("account") },
+              { label: "Take the tour", icon: "compass", onSelect: () => (current ? restartTour() : pages[0] && route.space ? (navigate(route.space, pages[0].path), setTimeout(restartTour, 600)) : restartTour()) },
+              { label: "Keyboard shortcuts", icon: "keyboard", hint: "?", onSelect: () => setDialog("keys") },
+              "sep",
+              { label: "Sign out", icon: "logout", onSelect: () => void signOut() },
+            ]}
+          />
+        </div>
       </aside>
-      {error && (
-        <p className="toast" role="alert" onClick={() => setError(undefined)}>
-          {error}
-        </p>
-      )}
+
       {current ? (
-        <PageEditor key={current.id} pageId={current.id} canEdit={canEdit} onChanged={loadTree} />
+        <PageEditor key={current.id} pageId={current.id} canEdit={canEdit} space={space} onChanged={loadTree} />
       ) : (
-        <main className="editor-main empty">
-          {spaces.length === 0 ? <p>No spaces yet.{canAdmin ? " Create one to start writing." : ""}</p> : <p>Pick a page, or create a new one.</p>}
-        </main>
+        <Home me={me} space={space} spaces={spaces} pages={pages} canEdit={canEdit} canAdmin={canAdmin} onNewPage={() => setDialog("page")} onNewSpace={() => setDialog("space")} onSettings={(tab) => setSettings((tab as SettingsTab) ?? "account")} />
       )}
-      {settings && <Settings canAdmin={canAdmin} onClose={() => setSettings(false)} />}
+
+      {current && <Tour />}
+      {settings && me && <Settings me={me} canAdmin={canAdmin} tab={settings} onTab={setSettings} onClose={() => setSettings(false)} onMe={setMe} />}
+      {dialog === "page" && space && <NewPageDialog space={space} onClose={() => setDialog(undefined)} onCreate={createPage} />}
+      {dialog === "space" && <NewSpaceDialog onClose={() => setDialog(undefined)} onCreate={createSpace} />}
+      {dialog === "keys" && <ShortcutsDialog onClose={() => setDialog(undefined)} />}
       {palette && route.space && (
         <Palette
           space={route.space}
@@ -179,8 +407,4 @@ export function App() {
       )}
     </div>
   );
-}
-
-function parseSpace() {
-  return location.pathname.replace(/^\/app\/?/, "").split("/")[0];
 }

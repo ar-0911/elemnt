@@ -50,6 +50,13 @@
       "when": 1792955054117,
       "tag": "0006_themes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792991666980,
+      "tag": "0007_accounts",
+      "breakpoints": true
     }
   ]
 }

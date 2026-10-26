@@ -88,14 +88,17 @@ git clone https://github.com/ar-0911/elemnt.git && cd elemnt
 cp .env.example .env
 echo "ELEMNT_SECRET_KEY=$(openssl rand -base64 32)" >> .env
 docker compose up -d
-docker compose exec server node dist/bootstrap.js --email you@example.com   # prints your API token
-docker compose exec server node dist/seed-demo.js                            # optional sample pages
 ```
 
 Then:
 
-1. Open http://localhost:8787/login and paste the token.
-2. Go to http://localhost:8787/app for the editor.
+1. Open http://localhost:8787 and create your account. The first account owns the workspace.
+2. Follow the **Get started** checklist on the welcome page. A short tour shows the editor the first time you open a page.
+3. Invite your team from **Settings → People**. Each invite link carries a role (viewer, editor or admin) and lasts 7 days.
+
+Optional sample pages: `docker compose exec server node dist/seed-demo.js` (after you've signed up).
+
+Sign-up is invite-only after the first account. Set `ELEMNT_SIGNUP=open` to let anyone create an account; they join as viewers.
 
 To use Claude features, add an Anthropic API key under **Settings** in the editor. Each workspace brings its own key. To connect Claude Code to your docs:
 

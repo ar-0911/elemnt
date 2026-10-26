@@ -41,6 +41,9 @@ export const api = {
 export interface Me {
   userId: string;
   email: string;
+  name: string | null;
+  username: string | null;
+  hasPassword: boolean;
   role: "owner" | "admin" | "editor" | "viewer" | undefined;
   linkedin: { connected: boolean; name?: string };
   /** Origin that runs widgets and runnable code; null when the server has none. */
