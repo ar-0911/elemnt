@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { createElemnt } from "../../core/src/index.js";
-import { enhance } from "../src/index.js";
+import { enhance, fitSlides } from "../src/index.js";
 
 const elemnt = createElemnt();
 function mount(source: string, options = {}) {
@@ -91,5 +91,36 @@ describe("widget host", () => {
     const root = mount(src);
     expect(root.querySelector(".elemnt-widget-frame")).toBeNull();
     expect(root.querySelector(".elemnt-widget-summary")).not.toBeNull();
+  });
+});
+
+describe("fitSlides", () => {
+  // happy-dom has no layout: a slide body is as tall as its paragraphs, list items and rows, 100px each, and holds 400px.
+  const height = (el: Element) => (el.matches(".slide-body") ? el.querySelectorAll("p,li,tr,h2").length * 100 : 0);
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", { configurable: true, get() { return height(this); } });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get() { return this.matches(".slide-body") ? 400 : 0; } });
+  });
+  const deck = (body: string) => {
+    document.body.innerHTML = `<section class="elemnt-slide"><div class="slide-stage"><div class="slide-body">${body}</div><div class="slide-foot"><span class="slide-num">1 / 1</span></div></div></section>`;
+    return fitSlides(document.body);
+  };
+  const bodies = (slides: HTMLElement[]) => slides.map((s) => [...s.querySelector(".slide-body")!.children].map((c) => c.tagName + (c.tagName === "OL" ? `@${c.getAttribute("start") ?? 1}:${c.children.length}` : "")).join(" "));
+
+  it("moves trailing blocks to continuation slides that repeat the heading", () => {
+    const slides = deck("<h2>Plan</h2><p>a</p><p>b</p><p>c</p><p>d</p><p>e</p>");
+    expect(bodies(slides)).toEqual(["H2 P P P", "H2 P P"]);
+    expect(slides[1]!.querySelector("h2")!.textContent).toBe("Plan · continued");
+    expect([...document.querySelectorAll(".slide-num")].map((n) => n.textContent)).toEqual(["1 / 2", "2 / 2"]);
+  });
+
+  it("splits a long list and keeps its numbering", () => {
+    const slides = deck(`<h2>Steps</h2><ol>${"<li>x</li>".repeat(8)}</ol>`);
+    expect(bodies(slides)).toEqual(["H2 OL@1:3", "H2 OL@4:3", "H2 OL@7:2"]);
+  });
+
+  it("doesn't leave a heading or a lead-in line at the bottom of a slide", () => {
+    const slides = deck("<h2>T</h2><p>a</p><p>b</p><p>Like this:</p><p>c</p>");
+    expect(bodies(slides)).toEqual(["H2 P P", "H2 P P"]);
   });
 });
