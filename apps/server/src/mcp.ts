@@ -13,6 +13,10 @@ import * as reposSvc from "./services/repos.js";
 import * as levelsSvc from "./services/levels.js";
 import { libraryGuide, listComponents } from "./services/library.js";
 import { hasRole, type Viewer } from "./services/workspace.js";
+import * as themeSvc from "./services/theme.js";
+
+/** Components the style guide explains; the rest are in the authoring guide. */
+const LAYOUT = ["hero", "cards", "stats", "timeline", "band", "badge", "quote", "graphic", "widget"];
 
 interface McpDeps extends pagesSvc.PageDeps {
   config: Config;
@@ -133,8 +137,44 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
   );
 
   server.registerTool(
+    "get_style_guide",
+    {
+      title: "Style guide",
+      description:
+        "How to make a page look and read great: the organization's theme (follow it; if it's locked, don't ask about colours or fonts), the user's saved style, the style presets, frontmatter style options, and the layout components (hero, cards, stats, timeline, graphics). Call it before writing or restyling any page, then ask the user what style and fonts they want unless the theme or their saved style already decides it.",
+      annotations: { readOnlyHint: true },
+    },
+    tool(async () => {
+      const [org, mine, library] = await Promise.all([
+        themeSvc.getOrgTheme(deps.db, ctx.workspaceId),
+        themeSvc.getUserStyle(deps.db, viewer.userId),
+        listComponents(deps.db, ctx.workspaceId),
+      ]);
+      const layoutDocs = LAYOUT.map((name) => deps.elemnt.components.get(name))
+        .filter((c) => c !== undefined)
+        .map((c) => `### ${c.name}\n\n${c.authoring.doc}\n\n~~~~md\n${c.authoring.snippet}\n~~~~`)
+        .join("\n\n");
+      return text(themeSvc.styleGuide({ org, mine, layoutDocs, library: libraryGuide(library) }));
+    }),
+  );
+
+  server.registerTool(
+    "save_my_style",
+    {
+      title: "Save my style",
+      description:
+        "Saves the style the user picked as their default, so get_style_guide offers it next time and you don't have to ask again. Same keys as the frontmatter style: block (preset, accent, accent2, headingFont, bodyFont, monoFont, background, headings, radius, width, mode). Only do this when the user agrees.",
+      inputSchema: { style: z.record(z.string(), z.unknown()).describe("e.g. { preset: \"aurora\", headingFont: \"Space Grotesk\" }") },
+    },
+    tool(async ({ style }: { style: Record<string, unknown> }) => {
+      const saved = await themeSvc.setUserStyle(deps.db, viewer.userId, themeSvc.toPageStyle(style));
+      return text({ saved });
+    }),
+  );
+
+  server.registerTool(
     "get_authoring_guide",
-    { title: "Authoring guide", description: "The Elemnt source syntax: Markdown plus directives such as :::callout, :::tabs and :::steps, with an example of each. Read it before writing pages.", annotations: { readOnlyHint: true } },
+    { title: "Authoring guide", description: "The Elemnt source syntax: Markdown plus directives such as :::callout, :::tabs and :::steps, with an example of each. Read it before writing pages, together with get_style_guide.", annotations: { readOnlyHint: true } },
     tool(async () => text(deps.elemnt.authoringGuide() + libraryGuide(await listComponents(deps.db, ctx.workspaceId)))),
   );
 
@@ -262,7 +302,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
             type: "text",
             text: `Write Elemnt documentation about: ${topic}.${slug ? ` Put it in the "${slug}" space.` : " Pick the best space with list_spaces, and say which."}
 
-First search for an existing page on this; if one exists, improve it with suggest_edit instead of creating a duplicate. Call get_authoring_guide, then write for a new teammate: why it matters, then specifics, using steps, tabs, callouts and diagrams where they help. Use only facts from this conversation and from the docs you read; mark anything unknown as TODO. Validate, save with create_draft or suggest_edit, and give me the review link.`,
+First search for an existing page on this; if one exists, improve it with suggest_edit instead of creating a duplicate. Call get_style_guide and get_authoring_guide. Unless the organization theme or my saved style already decides it, ask me what style and fonts I'd like before you write. Then write a page that pulls a new teammate in and stays clear: a hero with the promise, a visual near the top of each section, why it matters, then specifics, using steps, tabs, callouts, cards and diagrams where they help. Use only facts from this conversation and from the docs you read; mark anything unknown as TODO. Validate, save with create_draft or suggest_edit, and give me the review link.`,
           },
         },
       ],
@@ -274,7 +314,7 @@ First search for an existing page on this; if one exists, improve it with sugges
 
 const INSTRUCTIONS = `Elemnt hosts this team's documentation. Pages are written in Markdown with directives for rich components; people see a rendered page and you get Markdown.
 
-To answer questions, use search, then get_page. To write docs, call get_authoring_guide once, then create_draft for new pages or suggest_edit for existing ones, and validate first if unsure. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back.`;
+To answer questions, use search, then get_page. To write docs, call get_style_guide and get_authoring_guide once. Follow the organization theme if there is one; otherwise ask the user what style and fonts they'd like (or use their saved style). Pages should look like a designed web page and pull the reader in, while staying exact and easy to scan. Then use create_draft for new pages or suggest_edit for existing ones, and validate first. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back.`;
 
 /** Handles one stateless MCP request (Streamable HTTP, JSON responses). */
 export async function handleMcp(req: Request, deps: McpDeps, ctx: { viewer: Viewer; workspaceId: string }): Promise<Response> {

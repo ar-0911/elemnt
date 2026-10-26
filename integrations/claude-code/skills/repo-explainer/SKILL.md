@@ -12,9 +12,9 @@ An explainer is one rich page that tells a newcomer what this repository is, why
 1. **Check for an existing explainer.** Call `search` with the repo's GitHub URL (from `git remote get-url origin`). If a page comes back, update it with `suggest_edit` instead of creating another.
 2. **Pin what you read.** Run `git rev-parse HEAD`. Use this SHA in every github.com link you write, as `https://github.com/OWNER/REPO/blob/SHA/path#L10-L30`. Those links tell Elemnt which files the page depends on.
 3. **Read the repo.** README, package manifests, entry points, config, the main modules, tests and scripts. Every fact on the page must come from these files.
-4. **Learn the syntax.** Call `get_authoring_guide` once.
+4. **Pick the style, then learn the syntax.** Follow the `elemnt-docs-style` skill (`get_style_guide`; follow the organization theme, or ask the user for a style and fonts). Explainers are the front door to a project, so lean into it: a hero, the architecture as a `:::graphic` or diagram, big numbers. Then call `get_authoring_guide` once.
 5. **Write the page** with frontmatter `title` (the project's name and what it is) and a one-line `summary`. Use this outline, skipping any section the repo doesn't support:
-   - **What it is and the problem it solves**, in three sentences, for someone who has never seen it.
+   - **A `:::hero`** with what it is and the problem it solves, in two or three sentences, for someone who has never seen it, and buttons to the quickstart and the repo.
    - **The 30-second architecture**: a `:::diagram` (Mermaid flowchart) of the main parts and how data flows, with a sentence per box.
    - **Quickstart** as `:::steps`, with exact commands. Use `:::tabs` or `:::codegroup` for alternatives (npm / pnpm, Docker / local).
    - **A tour of the code**: for the four to eight files that matter, a heading, why it exists and a linked path. Use `:::annotate` for one short key excerpt.

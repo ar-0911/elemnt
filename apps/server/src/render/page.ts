@@ -9,6 +9,29 @@ export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
 }
 
+export interface Look {
+  css: string;
+  classes: string[];
+  fontsHref?: string;
+  mode: "auto" | "light" | "dark";
+}
+
+/**
+ * Head tags for a page style. The inline script sets light or dark before
+ * first paint (the reader's saved choice, else the page's default), so a
+ * dark page never flashes white.
+ */
+export function lookHead(nonce: string, look?: Look): string {
+  const fonts = look?.fontsHref
+    ? `<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" data-elemnt-fonts href="${escapeHtml(look.fontsHref)}">`
+    : "";
+  const mode = look?.mode ?? "auto";
+  return `${fonts}${look ? `<style>${look.css.replace(/<\/(style)/gi, "<\\/$1")}</style>` : ""}
+<script nonce="${nonce}">try{var t=localStorage.getItem("elemnt-theme");t=t==="light"||t==="dark"?t:${JSON.stringify(mode === "auto" ? null : mode)};if(t)document.documentElement.dataset.theme=t}catch(e){}</script>`;
+}
+
+export const bodyClass = (look?: Look) => (look ? ` class="${escapeHtml(look.classes.join(" "))}"` : "");
+
 export interface ShellInput {
   nonce: string;
   title: string;
@@ -33,6 +56,8 @@ export interface ShellInput {
   /** Approved reading levels, and the one being shown. */
   levels?: { level: string; label: string }[];
   level?: string;
+  /** The page style: tokens, wrapper classes, fonts, and the default light/dark mode. */
+  look?: Look;
   /** Explainer pages: the repo and commit the page was written against. */
   repo?: { repo: string; pinnedCommit: string; checkedCommit: string | null; behindBy: number };
 }
@@ -65,10 +90,12 @@ function repoBanner(r: NonNullable<ShellInput["repo"]>): string {
 export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): string {
   return [
     "default-src 'self'",
+    // Page-style fonts come from Google Fonts (ELEMNT_FONTS=off turns that off).
+    "font-src 'self' data: https://fonts.gstatic.com",
     // 'self' for /assets/elements.js; jsDelivr for Mermaid, loaded only on pages with diagrams.
     `script-src 'nonce-${nonce}' 'self' https://cdn.jsdelivr.net`,
     `frame-src ${sandboxUrl ? new URL(sandboxUrl).origin : "'none'"}`,
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https:",
     "connect-src 'self'",
     "object-src 'none'",
@@ -79,15 +106,17 @@ export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): strin
 
 const CSS = `
 ${themeTokensCss}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
-header.bar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:12px max(16px,4vw);border-bottom:1px solid var(--line);background:var(--surface)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 var(--font-body,system-ui,-apple-system,"Segoe UI",sans-serif);-webkit-font-smoothing:antialiased}
+header.bar{position:sticky;top:0;z-index:4;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:10px max(16px,4vw);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 78%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(12px);backdrop-filter:saturate(1.4) blur(12px)}
+.theme-toggle{min-width:34px;font-size:15px;line-height:1}
+.frame{container-type:inline-size}
 header.bar a{color:var(--muted);text-decoration:none}.bar .crumb{font-size:14px}
 .toggle{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;font-size:13px}
 .toggle a{padding:6px 12px;color:var(--muted)}.toggle a[aria-current="page"]{background:var(--soft);color:var(--accent);font-weight:600}
 .actions{display:flex;gap:8px;align-items:center}
 .btn{font:600 13px system-ui;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;text-decoration:none}
 .btn.li{background:#0a66c2;border-color:#0a66c2;color:#fff}
-main{max-width:760px;margin:0 auto;padding:32px 16px 96px}
+main{max-width:var(--page-width,760px);margin:0 auto;padding:32px 16px 96px}
 .levels{display:inline-flex;gap:2px;font-size:13px}.levels a{padding:4px 8px;border-radius:5px;color:var(--muted)}.levels a[aria-current=page]{background:var(--soft);color:var(--accent);font-weight:600}
 .elemnt-ask-open{position:fixed;right:20px;bottom:20px;font:600 14px system-ui;padding:10px 18px;border-radius:999px;border:0;background:var(--accent);color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.18);cursor:pointer}
 .elemnt-ask-chip{position:absolute;z-index:5;font:600 12px system-ui;padding:5px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--accent);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.12)}
@@ -107,8 +136,10 @@ ${contentCss}
 `;
 
 const SCRIPT = `
-import { enhance, mountAsk, trackReading } from "/assets/elements.js";
+import { enhance, mountAsk, mountThemeToggle, trackReading } from "/assets/elements.js";
 const cfg = JSON.parse(document.getElementById("elemnt-config").textContent);
+const toggle = document.getElementById("theme-toggle");
+if (toggle) mountThemeToggle(toggle, cfg.mode);
 const article = document.querySelector("article.elemnt-page");
 const source = new URLSearchParams(location.search).get("utm_source") || undefined;
 const options = {
@@ -184,20 +215,22 @@ ${d ? `<meta property="og:description" content="${d}">` : ""}
 <meta property="og:url" content="${escapeHtml(pageHref)}"><meta property="og:site_name" content="${escapeHtml(p.space.name)}">
 <meta name="twitter:card" content="summary">
 <style>${CSS}</style>
-</head><body>
+${lookHead(p.nonce, p.look)}
+</head><body${bodyClass(p.look)}>
 <header class="bar">
   <span class="crumb"><a href="/s/${escapeHtml(p.space.slug)}">${escapeHtml(p.space.name)}</a> / ${t}</span>
   <span class="actions">
     ${levelNav(p)}
     <a class="btn" href="${escapeHtml(pageHref)}?view=present${p.level ? `&amp;level=${escapeHtml(p.level)}` : ""}">Present</a>
     <nav class="toggle" aria-label="View"><a href="${escapeHtml(pageViewHref)}"${p.view === "page" ? ' aria-current="page"' : ""}>Page</a><a href="${escapeHtml(mdViewHref)}"${p.view === "markdown" ? ' aria-current="page"' : ""}>Markdown</a></nav>
+    <button class="btn theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode">☾</button>
     ${p.editUrl ? `<a class="btn" href="${escapeHtml(p.editUrl)}">Edit</a>` : ""}
     ${share}
   </span>
 </header>
-<main>${p.repo ? repoBanner(p.repo) : ""}${content}</main>
+<div class="frame"><main>${p.repo ? repoBanner(p.repo) : ""}${content}</main></div>
 ${dialog}
-<script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: p.sandboxUrl ?? null, autorun: Boolean(p.autorun), pageId: p.pageId ?? null, ask: Boolean(p.ask && p.view === "page") })}</script>
+<script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: p.sandboxUrl ?? null, autorun: Boolean(p.autorun), pageId: p.pageId ?? null, ask: Boolean(p.ask && p.view === "page"), mode: p.look?.mode ?? "auto" })}</script>
 <script type="module" nonce="${p.nonce}">${SCRIPT}</script>
 </body></html>`;
 }

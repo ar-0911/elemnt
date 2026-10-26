@@ -28,6 +28,7 @@ import * as askSvc from "./services/ask.js";
 import * as levelsSvc from "./services/levels.js";
 import * as librarySvc from "./services/library.js";
 import * as insightsSvc from "./services/insights.js";
+import * as themeSvc from "./services/theme.js";
 import { githubClient, normalizeRepo, verifyWebhook } from "./services/github.js";
 import { widgetHash, sha256Hex } from "@elemnt/core";
 import { readFile } from "node:fs/promises";
@@ -189,7 +190,8 @@ export function createApp(deps: AppDeps) {
   app.get("/api/me", async (c) => {
     const viewer = requireRole(c, "viewer");
     const account = await linkedin.getAccount(deps.db, viewer.userId);
-    return c.json({ ...viewer, sandboxUrl: sandboxUrl ?? null, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
+    const [theme, style] = await Promise.all([themeSvc.getOrgTheme(deps.db, c.get("workspaceId")), themeSvc.getUserStyle(deps.db, viewer.userId)]);
+    return c.json({ ...viewer, sandboxUrl: sandboxUrl ?? null, theme, style, fonts: deps.config.fonts !== false, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
   });
 
   app.post("/api/preview", async (c) => {
@@ -271,6 +273,30 @@ export function createApp(deps: AppDeps) {
     const { askPublic } = z.object({ askPublic: z.boolean() }).parse(await c.req.json());
     await deps.db.update(workspaces).set({ askPublic }).where(eq(workspaces.id, c.get("workspaceId")));
     return c.json({ askPublic });
+  });
+
+  // ---------- Themes and styles ----------
+
+  app.get("/api/settings/theme", async (c) => {
+    requireRole(c, "viewer");
+    return c.json({ theme: await themeSvc.getOrgTheme(deps.db, c.get("workspaceId")) });
+  });
+
+  app.put("/api/settings/theme", async (c) => {
+    requireRole(c, "admin");
+    const { theme } = z.object({ theme: z.unknown() }).parse(await c.req.json());
+    return c.json({ theme: await themeSvc.setOrgTheme(deps.db, c.get("workspaceId"), theme ?? null) });
+  });
+
+  app.get("/api/me/style", async (c) => {
+    const viewer = requireRole(c, "viewer");
+    return c.json({ style: await themeSvc.getUserStyle(deps.db, viewer.userId) });
+  });
+
+  app.put("/api/me/style", async (c) => {
+    const viewer = requireRole(c, "viewer");
+    const { style } = z.object({ style: z.unknown() }).parse(await c.req.json());
+    return c.json({ style: await themeSvc.setUserStyle(deps.db, viewer.userId, style ?? null) });
   });
 
   /** Reading signals from the reader (sendBeacon, so the body arrives as text). */
@@ -1019,6 +1045,12 @@ export function createApp(deps: AppDeps) {
     );
   });
 
+  /** The page's look: its revision's style over the workspace theme. */
+  async function lookFor(workspaceId: string, revisionId: string) {
+    const [org, own] = await Promise.all([themeSvc.getOrgTheme(deps.db, workspaceId), themeSvc.revisionStyle(deps.db, revisionId)]);
+    return themeSvc.pageLook(org, own, { fonts: deps.config.fonts !== false });
+  }
+
   app.get("/s/:space/*", async (c) => {
     const slug = c.req.param("space");
     let space: Space;
@@ -1058,7 +1090,7 @@ export function createApp(deps: AppDeps) {
     if (requested === "present" || requested === "carousel") {
       const source = level?.source ?? (await pagesSvc.readRevision(deps, page.publishedRevisionId, "source"));
       const slides = await Promise.all(elemnt.toSlides(elemnt.parse(source)).map(async (sl) => ({ ...sl, html: await widgetsSvc.decorateWidgets(deps.db, sl.html) })));
-      return html(c, renderDeck({ nonce: c.get("nonce"), title: page.title, canonicalUrl: canonical, slides, mode: requested, ...(sandboxUrl ? { sandboxUrl } : {}) }));
+      return html(c, renderDeck({ nonce: c.get("nonce"), title: page.title, canonicalUrl: canonical, slides, mode: requested, look: await lookFor(c.get("workspaceId"), page.publishedRevisionId), ...(sandboxUrl ? { sandboxUrl } : {}) }));
     }
 
     const stored = level ? (view === "page" ? level.html : level.markdown) : await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
@@ -1078,6 +1110,7 @@ export function createApp(deps: AppDeps) {
         space,
         view,
         body,
+        look: await lookFor(c.get("workspaceId"), page.publishedRevisionId),
         ...(sandboxUrl ? { sandboxUrl } : {}),
         autorun,
         ...(repoLink ? { repo: repoLink } : {}),

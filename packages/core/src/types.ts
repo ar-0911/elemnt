@@ -21,6 +21,8 @@ export interface Diagnostic {
 export interface Frontmatter {
   title?: string;
   summary?: string;
+  /** Validated page style (a preset name in source becomes `{ preset }`). */
+  style?: import("./style.js").PageStyle;
   [key: string]: unknown;
 }
 

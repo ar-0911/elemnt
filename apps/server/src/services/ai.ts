@@ -61,6 +61,8 @@ export function editorSystemPrompt(authoringGuide: string): string {
 
 Write clear, specific, explanatory docs. Prefer short paragraphs, concrete examples and the components below where they genuinely help the reader (a callout for a real warning, tabs for alternatives, steps for a procedure). Keep the author's voice, facts and structure unless asked to change them. Never invent product facts, commands, URLs or numbers; if something is unknown, leave a clearly marked TODO.
 
+Keep the page's \`style:\` frontmatter unless asked to change it. When asked to make a page more engaging or visual, reach for :::hero, ::::cards, :::stats, ::::timeline, :::graphic (inline SVG using var(--accent)) and :::band, but every flourish must carry information and the page must stay easy to scan.
+
 Every component you use must be valid per this guide:
 
 ${authoringGuide}`;

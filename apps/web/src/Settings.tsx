@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type AiStatus } from "./api";
+import type { OrgTheme, PageStyle } from "@elemnt/core";
+import { api, ApiError, refreshMe, type AiStatus } from "./api";
+import { StyleForm } from "./StyleForm";
 
 interface WidgetSettings {
   verified: boolean;
@@ -112,15 +114,94 @@ function AskSection() {
   );
 }
 
-/** Workspace settings: the Anthropic API key, MCP connection and widget trust. */
-export function Settings({ onClose }: { onClose(): void }) {
+/** The organization theme every page starts from (admins). */
+function ThemeSection() {
+  const [theme, setTheme] = useState<OrgTheme>();
+  const [status, setStatus] = useState<string>();
+  useEffect(() => {
+    void api.get<{ theme: OrgTheme | null }>("/api/settings/theme").then((r) => setTheme(r.theme ?? {}));
+  }, []);
+  if (!theme) return null;
+  const save = async (next: OrgTheme | null) => {
+    try {
+      const r = await api.put<{ theme: OrgTheme | null }>("/api/settings/theme", { theme: next });
+      setTheme(r.theme ?? {});
+      setStatus(next ? "Saved. Every page without its own style uses it now." : "Removed.");
+      void refreshMe();
+    } catch (err) {
+      setStatus((err as ApiError).message);
+    }
+  };
+  return (
+    <>
+      <h2>Organization theme</h2>
+      <p className="hint">
+        The look every page in this workspace starts from. Pages can pick their own style in their frontmatter unless you lock the theme. Claude reads this theme (and your notes) before it writes a page.
+      </p>
+      <StyleForm org value={theme} onChange={setTheme} />
+      <div className="row">
+        <label className="row">
+          <input type="checkbox" checked={Boolean(theme.lock)} onChange={(e) => setTheme({ ...theme, lock: e.target.checked || undefined })} /> Lock colours and fonts for every page
+        </label>
+        <button type="button" className="btn primary" onClick={() => void save(theme)}>
+          Save theme
+        </button>
+        <button type="button" className="btn" onClick={() => void save(null)}>
+          Remove
+        </button>
+      </div>
+      {status && <p className="hint" role="status">{status}</p>}
+    </>
+  );
+}
+
+/** Each person's own style: new pages start with it and Claude offers it first. */
+function MyStyleSection() {
+  const [style, setStyle] = useState<PageStyle>();
+  const [theme, setTheme] = useState<OrgTheme | null>(null);
+  const [status, setStatus] = useState<string>();
+  useEffect(() => {
+    void api.get<{ style: PageStyle | null }>("/api/me/style").then((r) => setStyle(r.style ?? {}));
+    void api.get<{ theme: OrgTheme | null }>("/api/settings/theme").then((r) => setTheme(r.theme));
+  }, []);
+  if (!style) return null;
+  const save = async (next: PageStyle | null) => {
+    try {
+      const r = await api.put<{ style: PageStyle | null }>("/api/me/style", { style: next });
+      setStyle(r.style ?? {});
+      setStatus(next ? "Saved. New pages start in this style, and Claude uses it when you don't say otherwise." : "Cleared.");
+      void refreshMe();
+    } catch (err) {
+      setStatus((err as ApiError).message);
+    }
+  };
+  return (
+    <>
+      <h2>My style</h2>
+      <p className="hint">{theme?.lock ? "Your organization's theme is locked, so colours and fonts come from it; width and background are still yours." : "How you like your pages to look. New pages start with it, and Claude offers it before asking."}</p>
+      <StyleForm value={style} onChange={setStyle} base={theme} />
+      <div className="row">
+        <button type="button" className="btn primary" onClick={() => void save(style)}>
+          Save my style
+        </button>
+        <button type="button" className="btn" onClick={() => void save(null)}>
+          Clear
+        </button>
+      </div>
+      {status && <p className="hint" role="status">{status}</p>}
+    </>
+  );
+}
+
+/** Settings: the Anthropic API key, MCP connection, themes and widget trust. */
+export function Settings({ onClose, canAdmin }: { onClose(): void; canAdmin: boolean }) {
   const [status, setStatus] = useState<AiStatus>();
   const [key, setKey] = useState("");
   const [error, setError] = useState<string>();
 
   useEffect(() => {
-    void api.get<AiStatus>("/api/ai").then(setStatus);
-  }, []);
+    if (canAdmin) void api.get<AiStatus>("/api/ai").then(setStatus);
+  }, [canAdmin]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -141,6 +222,10 @@ export function Settings({ onClose }: { onClose(): void }) {
   return (
     <div className="overlay" onClick={onClose}>
       <div className="palette settings" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
+        <MyStyleSection />
+        {canAdmin && <ThemeSection />}
+        {canAdmin && (
+          <>
         <h2>Claude</h2>
         <p className="hint">
           Elemnt uses your workspace's own Anthropic API key for ⌘I suggestions. It's encrypted at rest and never shown again.
@@ -164,12 +249,14 @@ export function Settings({ onClose }: { onClose(): void }) {
           )}
         </form>
         {error && <p className="error">{error}</p>}
+          </>
+        )}
         <h2>Connect Claude to your docs</h2>
         <p className="hint">
           Claude Code: <code>claude mcp add --transport http elemnt {location.origin}/mcp</code>. In Claude, add a custom connector with the URL <code>{location.origin}/mcp</code>. Both sign in through Elemnt; anything they write lands as a draft or suggestion.
         </p>
-        <AskSection />
-        <WidgetsSection />
+        {canAdmin && <AskSection />}
+        {canAdmin && <WidgetsSection />}
       </div>
     </div>
   );

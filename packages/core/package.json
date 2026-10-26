@@ -24,6 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "hast-util-from-html": "2.0.3",
     "hast-util-sanitize": "^5.0.2",
     "hast-util-to-html": "^9.0.5",
     "hastscript": "^9.0.1",

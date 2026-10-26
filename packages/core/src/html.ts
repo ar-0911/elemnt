@@ -7,6 +7,7 @@ import { h } from "hastscript";
 import { runtimeFor, wantsRun } from "./runnable.js";
 import { elemntData, labelText, splitDirective } from "./directive.js";
 import type { AnyComponent, DirectiveNode, HtmlContext, ParsedDocument } from "./types.js";
+import { SVG_ATTRIBUTES, SVG_TAGS } from "./components/graphic.js";
 
 /**
  * Allowlist for everything Elemnt emits. Raw HTML in source is dropped before
@@ -51,11 +52,15 @@ export const elemntSanitizeSchema: Schema = {
     "elemnt-quiz",
     "elemnt-widget",
     "dfn",
+    "header",
+    ...SVG_TAGS,
   ],
   attributes: {
     ...withElemntClasses(defaultSchema.attributes ?? {}),
-    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "role", "data*"],
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "className", "role", "data*", "ariaHidden"],
     dfn: ["title", "tabIndex"],
+    // Only components emit SVG (raw HTML never reaches here); graphic.ts has already checked href values.
+    ...Object.fromEntries(SVG_TAGS.map((t) => [t, ["use", "textPath", "linearGradient", "radialGradient", "pattern", "filter", "mpath"].includes(t) ? [...SVG_ATTRIBUTES, "href"] : SVG_ATTRIBUTES])),
   },
 };
 

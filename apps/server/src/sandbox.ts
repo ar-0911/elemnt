@@ -29,9 +29,10 @@ export function widgetCsp(nonce: string, publicUrl: string, hosts: string[]): st
     "default-src 'none'",
     // No 'unsafe-eval' and no 'wasm-unsafe-eval': eval, new Function and WebAssembly all throw.
     `script-src 'nonce-${nonce}'`,
-    "style-src 'unsafe-inline'",
+    // Google Fonts only, so a widget can use the page's fonts.
+    "style-src 'unsafe-inline' https://fonts.googleapis.com",
     `img-src data: blob:${remote ? ` ${remote}` : ""}`,
-    "font-src data:",
+    "font-src data: https://fonts.gstatic.com",
     "media-src data: blob:",
     `connect-src ${remote || "'none'"}`,
     "worker-src 'none'",
@@ -82,7 +83,17 @@ const BRIDGE = `(() => {
     const m = e.data;
     if (e.source !== parent || !m || m.elemnt !== 1 || m.type !== "theme") return;
     dark = Boolean(m.dark);
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    const root = document.documentElement;
+    root.dataset.theme = dark ? "dark" : "light";
+    // The page style's tokens, so the widget matches the page around it.
+    for (const [k, v] of Object.entries(m.vars || {})) {
+      if (/^--[a-z0-9-]+$/.test(k) && typeof v === "string" && !/url\(/i.test(v)) root.style.setProperty(k, v);
+    }
+    if (typeof m.fonts === "string" && m.fonts.startsWith("https://fonts.googleapis.com/css2?") && !document.querySelector("link[data-fonts]")) {
+      const l = document.createElement("link");
+      l.rel = "stylesheet"; l.href = m.fonts; l.dataset.fonts = "";
+      document.head.append(l);
+    }
     for (const fn of listeners) try { fn(dark); } catch (err) { console.error(err); }
   });
   document.addEventListener("click", (e) => {
@@ -101,9 +112,8 @@ const BRIDGE = `(() => {
 })();`;
 
 const WIDGET_CSS = `${themeTokensCss}
-:root[data-theme=light]{color-scheme:light}
-:root[data-theme=dark]{--bg:#0f1218;--fg:#e4e7ee;--muted:#9aa2b4;--line:#2a303c;--surface:#161a22;--accent:#8aa2ff;--soft:#1d2440;--code:#1c212b;color-scheme:dark}
-html,body{margin:0;background:transparent;color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+html,body{margin:0;background:transparent;color:var(--fg);font:15px/1.5 var(--font-body,system-ui,sans-serif)}
+h1,h2,h3,h4{font-family:var(--font-head,inherit)}code,pre{font-family:var(--font-mono,ui-monospace,monospace)}
 body{padding:12px}*{box-sizing:border-box}`;
 
 const RUNNER = {

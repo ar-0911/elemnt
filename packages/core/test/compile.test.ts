@@ -120,17 +120,17 @@ describe("robustness", () => {
 
 describe("registry", () => {
   const badge: ElemntComponent<{ tone: "new" | "beta" }> = {
-    name: "badge",
+    name: "status",
     kinds: ["textDirective"],
     props: z.object({ tone: z.enum(["new", "beta"]).default("new") }),
     render: (node, { tone }, ctx) => ({ type: "element", tagName: "span", properties: { className: ["badge"], dataTone: tone }, children: ctx.label(node) }),
     toMarkdown: (node, _p, ctx) => [{ type: "text", value: `(${ctx.labelText(node) ?? ""})` }],
-    authoring: { doc: "Inline status badge.", snippet: ":badge[beta]{tone=beta}" },
+    authoring: { doc: "Inline status badge.", snippet: ":status[beta]{tone=beta}" },
   };
 
   it("accepts custom components alongside the built-ins", () => {
     const custom = createElemnt({ components: [...builtinComponents, badge] });
-    const { html, markdown } = custom.compile("Search :badge[beta]{tone=beta} is here.");
+    const { html, markdown } = custom.compile("Search :status[beta]{tone=beta} is here.");
     expect(html).toBe('<p>Search <span class="badge" data-tone="beta">beta</span> is here.</p>');
     expect(markdown).toBe("Search (beta) is here.\n");
   });
