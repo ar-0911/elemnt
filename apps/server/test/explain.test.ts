@@ -165,6 +165,7 @@ describe("README card and sync", () => {
     await t.call(`/api/pages/${pageId}/repo`, { method: "PUT", token: t.ownerToken, json: { repo: "acme/router" } });
     const card = await t.call("/r/acme/router/card.svg?theme=dark");
     expect(card.headers.get("content-type")).toBe("image/svg+xml");
+    expect(card.headers.get("content-security-policy")).toContain("default-src 'none'");
     const svg = await card.text();
     expect(svg).toContain("Router: a tiny HTTP router");
     expect(svg).toContain("Match paths to handlers");

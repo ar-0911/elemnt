@@ -648,10 +648,8 @@ export function createApp(deps: AppDeps) {
   app.get("/r/:owner/:name/card.svg", async (c) => {
     const repo = `${c.req.param("owner")}/${c.req.param("name")}`.toLowerCase();
     const best = (await reposSvc.pagesForRepo(deps, repo)).find((p) => p.published && p.visibility === "public");
-    c.header("Content-Type", "image/svg+xml");
-    c.header("Cache-Control", "public, max-age=3600");
     const theme = c.req.query("theme") === "dark" ? "dark" : "light";
-    return c.body(readmeCard({ repo, theme, ...(best ? { title: best.title, summary: best.summary } : {}) }));
+    return svg(c, readmeCard({ repo, theme, ...(best ? { title: best.title, summary: best.summary } : {}) }), 3600);
   });
 
   // ---------- GitHub data for ::repo, ::filetree and ::snippet ----------
