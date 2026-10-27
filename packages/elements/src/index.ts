@@ -2,6 +2,7 @@ import { enhanceAnnotate } from "./annotate.js";
 import { enhanceChart } from "./chart.js";
 import { enhanceDatagrid } from "./datagrid.js";
 import { enhanceExplore } from "./explore.js";
+import { enhanceGithub } from "./github.js";
 import { enhanceMermaid, type MermaidLoader } from "./mermaid.js";
 import { enhanceQuery } from "./query.js";
 import { enhanceQuiz } from "./quiz.js";
@@ -15,6 +16,8 @@ export interface EnhanceOptions {
   widgets?: Omit<WidgetOptions, "sandboxOrigin">;
   /** Base for `:query` lookups; defaults to the current origin. */
   queryEndpoint?: string;
+  /** Base for ::repo, ::filetree and ::snippet lookups; defaults to the current origin. */
+  githubEndpoint?: string;
   loadMermaid?: MermaidLoader;
 }
 
@@ -31,6 +34,7 @@ export function enhance(root: ParentNode, options: EnhanceOptions = {}): void {
   enhanceAnnotate(root);
   enhanceQuiz(root);
   enhanceQuery(root, options.queryEndpoint ?? "");
+  enhanceGithub(root, options.githubEndpoint ?? "");
   enhanceMermaid(root, options.loadMermaid);
   if (options.sandboxOrigin) {
     enhanceWidgets(root, { ...options.widgets, sandboxOrigin: options.sandboxOrigin });

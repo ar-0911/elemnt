@@ -65,16 +65,44 @@ function ThemeButton() {
   return <button ref={ref} type="button" className="icon-btn theme-btn" />;
 }
 
-function NewPageDialog({ space, onClose, onCreate }: { space: Space; onClose(): void; onCreate(path: string, title: string, summary: string): Promise<void> }) {
+interface ExplainJob {
+  status: "running" | "done" | "failed";
+  error?: string;
+  result?: { path: string; space: string; citedPaths: string[]; commit: string };
+}
+
+const EXPLAIN_STAGES = ["Reading the repo's files", "Working out how it fits together", "Writing the explainer", "Checking the page"];
+
+function NewPageDialog({
+  space,
+  initialMode = "blank",
+  onClose,
+  onCreate,
+  onExplained,
+}: {
+  space: Space;
+  initialMode?: "blank" | "repo";
+  onClose(): void;
+  onCreate(path: string, title: string, summary: string): Promise<void>;
+  onExplained(path: string): void;
+}) {
+  const [mode, setMode] = useState(initialMode);
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [path, setPath] = useState("");
   const [edited, setEdited] = useState(false);
+  const [repo, setRepo] = useState("");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState<number>();
+  const alive = useRef(true);
+  useEffect(() => () => void (alive.current = false), []);
   const finalPath = edited ? path : slugify(title);
+  const repoOk = /^(https?:\/\/)?(www\.)?github\.com\/[\w.-]+\/[\w.-]+|^[\w.-]+\/[\w.-]+$/.test(repo.trim());
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (mode === "repo") return explain();
     if (!title.trim() || !finalPath) return;
     setBusy(true);
     try {
@@ -84,43 +112,105 @@ function NewPageDialog({ space, onClose, onCreate }: { space: Space; onClose(): 
       setBusy(false);
     }
   }
+
+  async function explain() {
+    if (!repoOk) return;
+    setBusy(true);
+    setError(undefined);
+    const started = Date.now();
+    try {
+      const { id } = await api.post<{ id: string }>("/api/explain", { repo: repo.trim(), space: space.slug, ...(edited && path ? { path } : {}) });
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (!alive.current) return;
+        setElapsed(Date.now() - started);
+        const job = await api.get<ExplainJob>(`/api/explain/${id}`);
+        if (job.status === "failed") throw new Error(job.error ?? "Explaining failed.");
+        if (job.status === "done" && job.result) return onExplained(job.result.path);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+      setElapsed(undefined);
+    }
+  }
+
+  const stage = elapsed === undefined ? 0 : Math.min(EXPLAIN_STAGES.length - 1, Math.floor(elapsed / 25_000));
   return (
     <Dialog title={`New page in ${space.name}`} onClose={onClose}>
       <form className="form" onSubmit={(e) => void submit(e)}>
+        <div className="seg seg-wide" role="group" aria-label="Start from">
+          <button type="button" aria-pressed={mode === "blank"} onClick={() => setMode("blank")} disabled={busy}>
+            <Icon name="page" size={14} /> Blank page
+          </button>
+          <button type="button" aria-pressed={mode === "repo"} onClick={() => setMode("repo")} disabled={busy}>
+            <Icon name="repo" size={14} /> Explain a GitHub repo
+          </button>
+        </div>
+        {mode === "blank" ? (
+          <>
+            <label>
+              Title
+              <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Deploying the billing service" required />
+            </label>
+            <label>
+              One-line summary <span className="hint">Optional. Shown in search, link previews and to agents.</span>
+              <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What will the reader be able to do after reading?" />
+            </label>
+          </>
+        ) : (
+          <>
+            <p className="hint">Claude reads the repo and drafts one rich page: what it is, how it works, a quickstart and a tour of the code with live snippets. You review it before anything is published, and Elemnt suggests updates when the code changes.</p>
+            <label>
+              GitHub repo
+              <input autoFocus value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="https://github.com/owner/name" disabled={busy} spellCheck={false} autoCapitalize="none" />
+            </label>
+          </>
+        )}
         <label>
-          Title
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Deploying the billing service" required />
-        </label>
-        <label>
-          One-line summary <span className="hint">Optional. Shown in search, link previews and to agents.</span>
-          <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="What will the reader be able to do after reading?" />
-        </label>
-        <label>
-          Address
+          Address {mode === "repo" && <span className="hint">Optional. Defaults to the repo's name.</span>}
           <div className="prefixed">
             <span>/{space.slug}/</span>
             <input
-              value={finalPath}
+              value={mode === "repo" ? path : finalPath}
               onChange={(e) => {
                 setEdited(true);
                 setPath(slugify(e.target.value));
               }}
-              placeholder="deploying-billing"
+              placeholder={mode === "repo" ? "repo-name" : "deploying-billing"}
               aria-describedby="path-hint"
+              disabled={busy && mode === "repo"}
             />
           </div>
-          <span className="hint" id="path-hint">
-            Use / to nest it under another page, like guides/deploy.
-          </span>
+          {mode === "blank" && (
+            <span className="hint" id="path-hint">
+              Use / to nest it under another page, like guides/deploy.
+            </span>
+          )}
         </label>
+        {busy && mode === "repo" && (
+          <div className="progress-note" role="status">
+            <span className="spinner" aria-hidden="true" />
+            <div>
+              <strong>{EXPLAIN_STAGES[stage]}…</strong>
+              <span className="hint">Usually one to three minutes. You can close this; the draft will appear in the page list.</span>
+            </div>
+          </div>
+        )}
         {error && <p className="form-error" role="alert">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn" onClick={onClose}>
-            Cancel
+            {busy && mode === "repo" ? "Close" : "Cancel"}
           </button>
-          <button type="submit" className="btn primary" disabled={busy || !title.trim() || !finalPath}>
-            {busy ? "Creating…" : "Create page"}
-          </button>
+          {mode === "blank" ? (
+            <button type="submit" className="btn primary" disabled={busy || !title.trim() || !finalPath}>
+              {busy ? "Creating…" : "Create page"}
+            </button>
+          ) : (
+            <button type="submit" className="btn primary" disabled={busy || !repoOk}>
+              <Icon name="sparkle" size={14} /> {busy ? "Explaining…" : "Explain this repo"}
+            </button>
+          )}
         </div>
       </form>
     </Dialog>
@@ -236,7 +326,7 @@ function Shell() {
   const [pages, setPages] = useState<TreePage[]>([]);
   const [palette, setPalette] = useState(false);
   const [settings, setSettings] = useState<SettingsTab | false>(false);
-  const [dialog, setDialog] = useState<"page" | "space" | "keys">();
+  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys">();
 
   useEffect(() => {
     getMe()
@@ -386,12 +476,26 @@ function Shell() {
       {current ? (
         <PageEditor key={current.id} pageId={current.id} canEdit={canEdit} space={space} onChanged={loadTree} />
       ) : (
-        <Home me={me} space={space} spaces={spaces} pages={pages} canEdit={canEdit} canAdmin={canAdmin} onNewPage={() => setDialog("page")} onNewSpace={() => setDialog("space")} onSettings={(tab) => setSettings((tab as SettingsTab) ?? "account")} />
+        <Home me={me} space={space} spaces={spaces} pages={pages} canEdit={canEdit} canAdmin={canAdmin} onNewPage={() => setDialog("page")} onExplain={() => setDialog("explain")} onNewSpace={() => setDialog("space")} onSettings={(tab) => setSettings((tab as SettingsTab) ?? "account")} />
       )}
 
       {current && <Tour />}
       {settings && me && <Settings me={me} canAdmin={canAdmin} tab={settings} onTab={setSettings} onClose={() => setSettings(false)} onMe={setMe} />}
-      {dialog === "page" && space && <NewPageDialog space={space} onClose={() => setDialog(undefined)} onCreate={createPage} />}
+      {(dialog === "page" || dialog === "explain") && space && (
+        <NewPageDialog
+          space={space}
+          initialMode={dialog === "explain" ? "repo" : "blank"}
+          onClose={() => setDialog(undefined)}
+          onCreate={createPage}
+          onExplained={(path) => {
+            setDialog(undefined);
+            local.set(checklistFlag("page"), "1");
+            loadTree();
+            navigate(space.slug, path);
+            toast("Your explainer draft is ready. Review it, then publish.");
+          }}
+        />
+      )}
       {dialog === "space" && <NewSpaceDialog onClose={() => setDialog(undefined)} onCreate={createSpace} />}
       {dialog === "keys" && <ShortcutsDialog onClose={() => setDialog(undefined)} />}
       {palette && route.space && (

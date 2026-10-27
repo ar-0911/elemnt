@@ -228,7 +228,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
       {
         title: "Link a repo to a page",
         description:
-          "Marks a page as the explainer for a GitHub repo, written against a commit (default: the branch head now). Elemnt then watches the files the page cites (its github.com links plus cited_paths) and suggests edits when they change. Read-only toward the repo. Returns the README badge and short URL.",
+          "Marks a page as the explainer for a GitHub repo, written against a commit (default: the branch head now). Elemnt then watches the files the page cites (its github.com links plus cited_paths) and suggests edits when they change. Read-only toward the repo. Returns a README card (image with the page title and summary, linking to the page), a small badge and the short URL.",
         inputSchema: {
           space: z.string(),
           path: z.string(),
@@ -243,7 +243,8 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         const repo = normalizeRepo(args.repo);
         const link = await reposSvc.linkRepo(deps, deps.github, { pageId: p.id, repo, userId: viewer.userId, ...(args.commit ? { commit: args.commit } : {}), ...(args.branch ? { branch: args.branch } : {}), ...(args.cited_paths ? { citedPaths: args.cited_paths } : {}) });
         const short = `${deps.config.publicUrl}/r/${repo}`;
-        return text({ repo, pinnedCommit: link.pinnedCommit, branch: link.branch, readmeBadge: `[![Explained on Elemnt](${short}/badge.svg)](${short})`, shortUrl: short });
+        const readmeCard = `<a href="${short}">\n  <picture>\n    <source media="(prefers-color-scheme: dark)" srcset="${short}/card.svg?theme=dark">\n    <img alt="${repo}, explained on Elemnt" src="${short}/card.svg">\n  </picture>\n</a>`;
+        return text({ repo, pinnedCommit: link.pinnedCommit, branch: link.branch, readmeCard, readmeBadge: `[![Explained on Elemnt](${short}/badge.svg)](${short})`, shortUrl: short });
       }),
     );
 

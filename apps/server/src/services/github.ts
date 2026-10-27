@@ -23,6 +23,28 @@ export interface CompareResult {
   files: { filename: string; status: string; previousFilename?: string; patch?: string }[];
 }
 
+export interface RepoInfo {
+  repo: string;
+  url: string;
+  description: string | null;
+  homepage: string | null;
+  stars: number;
+  forks: number;
+  language: string | null;
+  license: string | null;
+  topics: string[];
+  defaultBranch: string;
+  pushedAt: string | null;
+  private: boolean;
+  latestRelease: { tag: string; url: string; publishedAt: string | null } | null;
+}
+
+export interface TreeEntry {
+  path: string;
+  type: "blob" | "tree";
+  size?: number;
+}
+
 export const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** Accepts owner/name or any github.com URL into the repo. */
@@ -50,7 +72,7 @@ export function githubClient(cfg: GitHubConfig, doFetch: typeof fetch) {
   const api = (cfg.apiUrl ?? "https://api.github.com").replace(/\/$/, "");
   const tokens = new Map<string, { token: string; expires: number }>();
 
-  async function call(path: string, auth: string | undefined, init: RequestInit = {}) {
+  async function call(path: string, auth: string | undefined, init: RequestInit = {}, raw = false) {
     const res = await doFetch(`${api}${path}`, {
       ...init,
       headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "elemnt", ...(auth ? { Authorization: auth } : {}), ...init.headers },
@@ -61,7 +83,7 @@ export function githubClient(cfg: GitHubConfig, doFetch: typeof fetch) {
       throw new HttpError(502, `GitHub refused access (${res.status}). For a private repo, install the Elemnt GitHub App on it or set GITHUB_TOKEN; anonymous access is also rate limited.`);
     }
     if (!res.ok) throw new HttpError(502, `GitHub returned ${res.status}.`);
-    return res.json() as Promise<Record<string, unknown>>;
+    return (raw ? res.text() : res.json()) as Promise<Record<string, unknown>>;
   }
 
   async function authFor(repo: string): Promise<string | undefined> {
@@ -81,6 +103,7 @@ export function githubClient(cfg: GitHubConfig, doFetch: typeof fetch) {
   }
 
   const get = async (repo: string, path: string) => call(path, await authFor(repo));
+  const getText = async (repo: string, path: string) => (await call(path, await authFor(repo), { headers: { Accept: "application/vnd.github.raw+json" } }, true)) as unknown as string;
 
   return {
     async defaultBranch(repo: string): Promise<string> {
@@ -89,6 +112,40 @@ export function githubClient(cfg: GitHubConfig, doFetch: typeof fetch) {
     async head(repo: string, branch: string): Promise<string> {
       const b = await get(repo, `/repos/${repo}/branches/${encodeURIComponent(branch)}`);
       return (b.commit as { sha: string }).sha;
+    },
+    /** Public facts for a repo card. The latest release is optional: most repos have none. */
+    async info(repo: string): Promise<RepoInfo> {
+      const r = await get(repo, `/repos/${repo}`);
+      const release = await get(repo, `/repos/${repo}/releases/latest`).catch(() => undefined);
+      const license = r.license as { spdx_id?: string; name?: string } | null;
+      return {
+        repo: (r.full_name as string) ?? repo,
+        url: r.html_url as string,
+        description: (r.description as string | null) ?? null,
+        homepage: (r.homepage as string | null) || null,
+        stars: (r.stargazers_count as number) ?? 0,
+        forks: (r.forks_count as number) ?? 0,
+        language: (r.language as string | null) ?? null,
+        license: license ? (license.spdx_id && license.spdx_id !== "NOASSERTION" ? license.spdx_id : (license.name ?? null)) : null,
+        topics: (r.topics as string[] | undefined) ?? [],
+        defaultBranch: r.default_branch as string,
+        pushedAt: (r.pushed_at as string | null) ?? null,
+        private: Boolean(r.private),
+        latestRelease: release ? { tag: release.tag_name as string, url: release.html_url as string, publishedAt: (release.published_at as string | null) ?? null } : null,
+      };
+    },
+    /** Every path at a commit or branch. GitHub truncates very large trees; we take what it gives. */
+    async tree(repo: string, ref: string): Promise<{ entries: TreeEntry[]; truncated: boolean }> {
+      const t = await get(repo, `/repos/${repo}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+      const entries = ((t.tree as { path: string; type: string; size?: number }[] | undefined) ?? [])
+        .filter((e) => e.type === "blob" || e.type === "tree")
+        .map((e) => ({ path: e.path, type: e.type as "blob" | "tree", ...(e.size !== undefined ? { size: e.size } : {}) }));
+      return { entries, truncated: Boolean(t.truncated) };
+    },
+    /** One file's text at a ref. */
+    async file(repo: string, ref: string, path: string): Promise<string> {
+      const enc = path.split("/").map(encodeURIComponent).join("/");
+      return getText(repo, `/repos/${repo}/contents/${enc}?ref=${encodeURIComponent(ref)}`);
     },
     async compare(repo: string, base: string, head: string): Promise<CompareResult> {
       const r = await get(repo, `/repos/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);

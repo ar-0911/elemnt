@@ -19,11 +19,12 @@ interface Props {
   canEdit: boolean;
   canAdmin: boolean;
   onNewPage(): void;
+  onExplain(): void;
   onNewSpace(): void;
   onSettings(tab?: string): void;
 }
 
-export function Home({ me, space, spaces, pages, canEdit, canAdmin, onNewPage, onNewSpace, onSettings }: Props) {
+export function Home({ me, space, spaces, pages, canEdit, canAdmin, onNewPage, onExplain, onNewSpace, onSettings }: Props) {
   const first = (me?.name ?? me?.username ?? "").split(" ")[0];
   const demo = spaces.find((s) => s.slug === "demo");
   const mcp = `claude mcp add --transport http elemnt ${location.origin}/mcp`;
@@ -52,6 +53,13 @@ export function Home({ me, space, spaces, pages, canEdit, canAdmin, onNewPage, o
         )}
 
         <section className="home-grid">
+          {canEdit && space && (
+            <a className="tile tile-feature" href="#" onClick={(e) => (e.preventDefault(), onExplain())}>
+              <Icon name="repo" size={22} />
+              <strong>Explain a GitHub repo</strong>
+              <span>Paste a repo URL. Claude reads the code and drafts a rich page to link from your README instead of a wall of text.</span>
+            </a>
+          )}
           {demo && space?.slug !== "demo" && (
             <a className="tile" href="/app/demo/tour" onClick={(e) => (e.preventDefault(), navigate("demo", "tour"))}>
               <Icon name="compass" size={22} />

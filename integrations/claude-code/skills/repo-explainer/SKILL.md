@@ -15,13 +15,14 @@ An explainer is one rich page that tells a newcomer what this repository is, why
 4. **Pick the style, then learn the syntax.** Follow the `elemnt-docs-style` skill (`get_style_guide`; follow the organization theme, or ask the user for a style and fonts). Explainers are the front door to a project, so lean into it: a hero, the architecture as a `:::graphic` or diagram, big numbers. Then call `get_authoring_guide` once.
 5. **Write the page** with frontmatter `title` (the project's name and what it is) and a one-line `summary`. Use this outline, skipping any section the repo doesn't support:
    - **A `:::hero`** with what it is and the problem it solves, in two or three sentences, for someone who has never seen it, and buttons to the quickstart and the repo.
+   - **`::repo{repo="OWNER/REPO"}`** right after the hero: a live card with the description, stars, language, license and latest release.
    - **The 30-second architecture**: a `:::diagram` (Mermaid flowchart) of the main parts and how data flows, with a sentence per box.
    - **Quickstart** as `:::steps`, with exact commands. Use `:::tabs` or `:::codegroup` for alternatives (npm / pnpm, Docker / local).
-   - **A tour of the code**: for the four to eight files that matter, a heading, why it exists and a linked path. Use `:::annotate` for one short key excerpt.
+   - **A tour of the code**: start with `::filetree{repo="OWNER/REPO" ref="SHA" highlight="path/a,path/b"}` so readers can browse the real tree. Then for the four to eight files that matter, a heading, why it exists, and `::snippet{repo="OWNER/REPO" ref="SHA" path="src/file.ts" lines="40-72"}` for the key lines (check the line numbers against the file at that SHA). Snippets show live code and Elemnt watches their files for drift. Use `:::annotate` when an excerpt needs line-by-line notes.
    - **Try it**: an `:::explore` with `:var`/`:calc` when the project has a formula or tunable worth playing with, a ```` ```js run ```` block for a pure function, or a `:::widget` for a small visual demo. Only when it genuinely helps.
    - **Where to go next**: contributing, deeper docs, issues.
 6. **Validate** with `validate` and fix every error.
 7. **Save** with `create_draft` (for example path `explainer` or the repo's name).
 8. **Link the repo** with `link_repo`: the page, the repo URL, the SHA from step 2 and `cited_paths` for the folders the tour covers.
-9. **Offer the README change.** `link_repo` returns a badge and a short URL. Show the user the one or two lines to add near the top of README.md and ask before editing it. That link is the only docs content that goes into the repo.
+9. **Offer the README change.** `link_repo` returns a README card (an image with the page's title and summary that links to it), a small badge and a short URL. Show the user the card snippet to add under the README's title and ask before editing it. That link is the only docs content that goes into the repo.
 10. **Report** the review link and remind the user the page goes live only after they publish it.
