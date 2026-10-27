@@ -154,3 +154,21 @@ describe("people", () => {
     expect((await env.json(`/api/members/${grace.userId}`, owner, { method: "DELETE" })).status).toBe(204);
   });
 });
+
+describe("cross-site requests", () => {
+  it("refuses cookie-authenticated writes sent from another site, and allows our own pages and API tokens", async () => {
+    env = await fresh();
+    const cookie = cookieOf(await env.form("/signup", ADA));
+    const put = (origin?: string) =>
+      env.app.request("/api/me/account", { method: "PUT", headers: { Cookie: cookie, "Content-Type": "application/json", ...(origin ? { Origin: origin } : {}) }, body: JSON.stringify({ name: "Ada" }) });
+    expect((await put("https://evil.example.com")).status).toBe(403);
+    expect((await put("https://sandbox.example.net")).status).toBe(403);
+    expect((await put("https://docs.example.com")).status).toBe(200);
+    expect((await put()).status).toBe(200);
+    // Reads stay open, and bearer tokens are never sent automatically by a browser.
+    expect((await env.app.request("/api/me", { headers: { Cookie: cookie, Origin: "https://evil.example.com" } })).status).toBe(200);
+    const made = await (await env.json("/api/me/tokens", cookie, { method: "POST", body: { name: "ci" } })).json();
+    const bearer = await env.app.request("/api/me/account", { method: "PUT", headers: { Authorization: `Bearer ${made.token}`, Origin: "https://evil.example.com", "Content-Type": "application/json" }, body: JSON.stringify({ name: "Ada" }) });
+    expect(bearer.status).toBe(200);
+  });
+});

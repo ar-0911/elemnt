@@ -13,6 +13,10 @@
     "./expr": {
       "types": "./dist/expr.d.ts",
       "import": "./dist/expr.js"
+    },
+    "./cdn": {
+      "types": "./dist/cdn.d.ts",
+      "import": "./dist/cdn.js"
     }
   },
   "files": [

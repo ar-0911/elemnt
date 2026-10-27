@@ -1,4 +1,4 @@
-import { contentCss, themeTokensCss } from "@elemnt/core";
+import { contentCss, MERMAID_BASE, themeTokensCss } from "@elemnt/core";
 /**
  * The reader shell around a stored rendition. Server-rendered and readable
  * with JavaScript off; @elemnt/elements (served at /assets/elements.js) then
@@ -92,8 +92,8 @@ export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): strin
     "default-src 'self'",
     // Page-style fonts come from Google Fonts (ELEMNT_FONTS=off turns that off).
     "font-src 'self' data: https://fonts.gstatic.com",
-    // 'self' for /assets/elements.js; jsDelivr for Mermaid, loaded only on pages with diagrams.
-    `script-src 'nonce-${nonce}' 'self' https://cdn.jsdelivr.net`,
+    // 'self' for /assets/elements.js; Mermaid's own folder on jsDelivr, loaded only on pages with diagrams.
+    `script-src 'nonce-${nonce}' 'self' ${MERMAID_BASE}`,
     `frame-src ${sandboxUrl ? new URL(sandboxUrl).origin : "'none'"}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https:",

@@ -125,7 +125,7 @@ Postgres holds everything except page bodies. Page sources and rendered HTML are
 
 The reader frames them with `sandbox="allow-scripts"` only, so they get an opaque origin with no cookies or storage. On top of that: a label outside the frame with the author's name, click-to-run for public pages of unverified workspaces, loading only on screen, a heartbeat watchdog that stops frames that hog the CPU or navigate away, links only through a "you're leaving" dialog, a scan on save that refuses miners, WebAssembly, password fields and obfuscated code, a Report button, and a block switch that disables a widget on every page at once.
 
-Locally the sandbox defaults to `127.0.0.1` when the public URL is `localhost`. In production, point a separate domain at the server (for example `acme.elemntusercontent.com`) and set `ELEMNT_SANDBOX_URL`; without one, widgets show their summary only.
+Locally the sandbox defaults to `127.0.0.1` when the public URL is `localhost`. In production, point a separate domain at the server, a different registrable domain rather than a subdomain of the app (for example `acme.elemntusercontent.com` for `docs.acme.com`), and set `ELEMNT_SANDBOX_URL`; without one, widgets show their summary only.
 
 Every save stores three bodies under their sha256: the source, the HTML and the Markdown.
 

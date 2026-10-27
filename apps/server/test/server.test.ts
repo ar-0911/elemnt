@@ -116,6 +116,10 @@ describe("reader", () => {
     expect(html).toContain('<meta property="og:title" content="Deploying billing">');
     expect(html).toContain('<meta property="og:description" content="From merged PR to production.">');
     expect(res.headers.get("content-security-policy")).toMatch(/script-src 'nonce-/);
+    // Only Mermaid's pinned folder on jsDelivr, never the whole CDN, which serves any npm package as script.
+    expect(res.headers.get("content-security-policy")).toContain("https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/");
+    expect(res.headers.get("content-security-policy")).not.toMatch(/https:\/\/cdn\.jsdelivr\.net[ ;]/);
+    expect(res.headers.get("strict-transport-security")).toContain("max-age=");
   });
 
   it("shows the stored Markdown in the Markdown view", async () => {
