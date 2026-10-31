@@ -83,6 +83,15 @@ describe("sandbox origin", () => {
     expect(body).toContain('type: "beat"');
   });
 
+  it("serves a bridge script that parses, so frames can send heartbeats", async () => {
+    const { hash } = await publishedHash();
+    const body = await (await t.call(`${SANDBOX_URL}/w/${hash}`)).text();
+    const bridge = body.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)![1]!;
+    expect(bridge).toContain('type: "beat"');
+    // A syntax error here stops every widget's heartbeat, and the host then kills it as "busy".
+    expect(() => new Function(bridge)).not.toThrow();
+  });
+
   it("answers only /w/* and never the app, even with a valid session", async () => {
     expect((await t.call(`${SANDBOX_URL}/api/me`, { token: t.ownerToken })).status).toBe(404);
     expect((await t.call(`${SANDBOX_URL}/s/pub/counter`)).status).toBe(404);
