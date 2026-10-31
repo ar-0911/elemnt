@@ -87,7 +87,7 @@ const BRIDGE = `(() => {
     root.dataset.theme = dark ? "dark" : "light";
     // The page style's tokens, so the widget matches the page around it.
     for (const [k, v] of Object.entries(m.vars || {})) {
-      if (/^--[a-z0-9-]+$/.test(k) && typeof v === "string" && !/url\(/i.test(v)) root.style.setProperty(k, v);
+      if (/^--[a-z0-9-]+$/.test(k) && typeof v === "string" && !/url\\(/i.test(v)) root.style.setProperty(k, v);
     }
     if (typeof m.fonts === "string" && m.fonts.startsWith("https://fonts.googleapis.com/css2?") && !document.querySelector("link[data-fonts]")) {
       const l = document.createElement("link");

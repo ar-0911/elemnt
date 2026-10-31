@@ -27,13 +27,18 @@ export interface WidgetOptions {
 }
 
 const BEAT_TIMEOUT_MS = 4000;
+/** How long a frame may take to send its first message (cold starts, slow networks). */
+const LOAD_TIMEOUT_MS = 15000;
 const MAX_STRIKES = 2;
 const OFFSCREEN_UNLOAD_MS = 3000;
 
 interface Live {
   frame: HTMLIFrameElement;
   loads: number;
+  started: number;
   lastBeat: number;
+  /** Set by the frame's first message; until then a silent frame is still loading, not busy. */
+  heard: boolean;
   strikes: number;
 }
 
@@ -130,7 +135,7 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.setAttribute("credentialless", "");
     frame.style.height = `${height}px`;
-    const l: Live = { frame, loads: 0, lastBeat: Date.now(), strikes: 0 };
+    const l: Live = { frame, loads: 0, started: Date.now(), lastBeat: Date.now(), heard: false, strikes: 0 };
     frame.onload = () => {
       // A second load means the widget navigated its own frame somewhere else.
       if (++l.loads > 1) kill("This widget tried to navigate away and was stopped.");
@@ -144,6 +149,7 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
     const m = e.data as { elemnt?: number; type?: string; height?: number; url?: string; text?: string };
     if (!m || m.elemnt !== 1) return;
     live.lastBeat = Date.now();
+    live.heard = true;
     if (m.type === "ready") live.frame.contentWindow?.postMessage(themeMessage(el, isDark()), "*");
     if (m.type === "resize" && typeof m.height === "number") live.frame.style.height = `${Math.min(2000, Math.max(40, Math.round(m.height)))}px`;
     if (m.type === "open" && typeof m.url === "string") {
@@ -164,6 +170,10 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
   const watchdog = setInterval(() => {
     if (!el.isConnected) return cleanup();
     if (!live || document.hidden) return;
+    if (!live.heard) {
+      if (Date.now() - live.started > LOAD_TIMEOUT_MS) kill("This widget couldn't start. Reload the page to try again.");
+      return;
+    }
     if (Date.now() - live.lastBeat > BEAT_TIMEOUT_MS) {
       live.strikes++;
       live.lastBeat = Date.now();
