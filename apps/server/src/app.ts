@@ -10,6 +10,8 @@ import type { Config } from "./lib/config.js";
 import { SecretBox, safeEqual } from "./lib/crypto.js";
 import { contentSecurityPolicy, escapeHtml, renderShell, renderSimple } from "./render/page.js";
 import { renderDeck } from "./render/deck.js";
+import { keepReading, pagesMenu, renderHome, renderSpaceIndex } from "./render/browse.js";
+import * as browseSvc from "./services/browse.js";
 import { HttpError } from "./services/errors.js";
 import * as linkedin from "./services/linkedin.js";
 import * as pagesSvc from "./services/pages.js";
@@ -1289,12 +1291,20 @@ export function createApp(deps: AppDeps) {
     return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh }, { viewer, workspaceId: c.get("workspaceId") });
   });
 
+  /** Landing pages wear the workspace theme; without one, Elemnt's own Aurora look. */
+  const browseLook = (org: Awaited<ReturnType<typeof themeSvc.getOrgTheme>>) =>
+    themeSvc.pageLook(org, org ? null : { preset: "aurora" }, { fonts: deps.config.fonts !== false });
+
   app.get("/", async (c) => {
     const viewer = c.get("viewer");
     const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
-    const list = all.filter((s) => canRead(viewer, s)).map((s) => `<li><a href="/s/${escapeHtml(s.slug)}">${escapeHtml(s.name)}</a> <small>${s.visibility}</small></li>`);
-    const signIn = viewer ? `${viewer.role && viewer.role !== "viewer" ? `<p><a class="btn" href="/app">Open the editor</a></p>` : ""}<form method="post" action="/logout"><button class="btn" type="submit">Sign out ${escapeHtml(viewer.email)}</button></form>` : `<p><a href="/login">Sign in</a></p>`;
-    return html(c, renderSimple(c.get("nonce"), "Elemnt", `<h1>Elemnt</h1>${list.length ? `<ul>${list.join("")}</ul>` : "<p>No spaces yet.</p>"}${signIn}`));
+    const org = await themeSvc.getOrgTheme(deps.db, c.get("workspaceId"));
+    const spaces = await Promise.all(all.filter((s) => canRead(viewer, s)).map(async (s) => ({ ...s, pages: await browseSvc.publishedPages(deps.db, s.id, org) })));
+    const account = viewer
+      ? `${viewer.role && viewer.role !== "viewer" ? `<a class="btn" href="/app">Open the editor</a>` : ""}<form method="post" action="/logout"><button class="btn" type="submit" title="${escapeHtml(viewer.email)}">Sign out</button></form>`
+      : `<a class="btn" href="/login">Sign in</a>`;
+    const look = browseLook(org);
+    return html(c, renderHome({ nonce: c.get("nonce"), spaces, look, account }));
   });
 
   app.get("/s/:space/llms.txt", async (c) => {
@@ -1315,15 +1325,10 @@ export function createApp(deps: AppDeps) {
 
   app.get("/s/:space", async (c) => {
     const space = await readableSpace(c, c.req.param("space"));
-    const list = (await pagesSvc.listPages(deps.db, space.id)).filter((p) => p.published);
-    const items = list.map((p) => {
-      const depth = p.path.split("/").length - 1;
-      return `<li style="margin-left:${depth * 20}px"><a href="/s/${escapeHtml(space.slug)}/${escapeHtml(p.path)}">${escapeHtml(p.title)}</a>${p.summary ? ` <small>${escapeHtml(p.summary)}</small>` : ""}</li>`;
-    });
-    return html(
-      c,
-      renderSimple(c.get("nonce"), space.name, `<p><a href="/">Elemnt</a></p><h1>${escapeHtml(space.name)}</h1>${items.length ? `<ul>${items.join("")}</ul>` : "<p>No pages yet.</p>"}<p><a href="/s/${escapeHtml(space.slug)}/llms.txt">llms.txt</a></p>`),
-    );
+    const org = await themeSvc.getOrgTheme(deps.db, c.get("workspaceId"));
+    const look = browseLook(org);
+    const list = await browseSvc.publishedPages(deps.db, space.id, org);
+    return html(c, renderSpaceIndex({ nonce: c.get("nonce"), publicUrl: deps.config.publicUrl, space, pages: list, look }));
   });
 
   /** The page's look: its revision's style over the workspace theme. */
@@ -1380,6 +1385,8 @@ export function createApp(deps: AppDeps) {
     const body = view === "page" ? await widgetsSvc.decorateWidgets(deps.db, stored) : stored;
     const repoLink = await reposSvc.getLink(deps, page.id);
     const levels = await levelsSvc.approvedLevels(deps, page.id);
+    const siblings = await browseSvc.publishedPages(deps.db, space.id, await themeSvc.getOrgTheme(deps.db, c.get("workspaceId")));
+    const browse = { menu: pagesMenu(space, siblings, path), more: keepReading(space, browseSvc.neighbours(siblings, path).more) };
     return html(
       c,
       renderShell({
@@ -1398,6 +1405,7 @@ export function createApp(deps: AppDeps) {
         pageId: page.id,
         ask: await askEnabled(c, isPublic),
         levels,
+        browse,
         ...(level ? { level: level.level } : {}),
         ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic
