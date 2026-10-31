@@ -185,9 +185,27 @@ function splitToFit(body: HTMLElement, block: Element, keep: number): Element | 
 
 /** Scales the slide's content (not its heading) down, in steps, until it fits. */
 function shrink(body: HTMLElement, flow: Element, lead: Element | null): void {
-  const fit = document.createElement("div");
-  fit.className = "slide-fit";
-  fit.append(...[...flow.childNodes].filter((n) => n !== lead));
-  flow.append(fit);
-  for (let z = 0.95; overflows(body) && z >= MIN_ZOOM; z -= 0.05) fit.style.zoom = String(z);
+  const kids = [...flow.childNodes].filter((n) => n !== lead && !(n instanceof Text && !n.data.trim()));
+  // Fitting again (the carousel does once widgets have sized themselves) reuses the wrapper, so
+  // nothing moves: moving an iframe reloads it.
+  let fit = kids.length === 1 && kids[0] instanceof HTMLElement && kids[0].matches(".slide-fit") ? kids[0] : undefined;
+  if (fit) {
+    for (const k of ["zoom", "width", "transform", "margin-bottom"]) fit.style.removeProperty(k);
+    if (!overflows(body)) return;
+  } else {
+    fit = document.createElement("div");
+    fit.className = "slide-fit";
+    fit.append(...kids);
+    flow.append(fit);
+  }
+  let z = 1;
+  for (let next = 0.95; overflows(body) && next >= MIN_ZOOM; next -= 0.05) fit.style.zoom = String((z = next));
+  // Printing doesn't apply zoom inside an iframe, so a zoomed widget prints at full size and is cut
+  // off. Scale those slides with a transform instead, which prints as it looks.
+  if (z < 1 && fit.querySelector("iframe, elemnt-widget")) {
+    fit.style.zoom = "";
+    fit.style.width = `${100 / z}%`;
+    fit.style.transform = `scale(${z})`;
+    fit.style.marginBottom = `${-(1 - z) * fit.offsetHeight}px`;
+  }
 }

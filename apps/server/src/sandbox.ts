@@ -114,7 +114,9 @@ const BRIDGE = `(() => {
 const WIDGET_CSS = `${themeTokensCss}
 html,body{margin:0;background:transparent;color:var(--fg);font:15px/1.5 var(--font-body,system-ui,sans-serif)}
 h1,h2,h3,h4{font-family:var(--font-head,inherit)}code,pre{font-family:var(--font-mono,ui-monospace,monospace)}
-body{padding:12px}*{box-sizing:border-box}`;
+body{padding:12px}*{box-sizing:border-box}
+/* Printing (the carousel PDF) can catch an entrance animation at its first frame; print the end state. */
+@media print{*,*::before,*::after{animation:none!important;transition:none!important}}`;
 
 const RUNNER = {
   javascript: `

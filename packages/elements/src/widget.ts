@@ -38,7 +38,8 @@ const OFFSCREEN_UNLOAD_MS = 3000;
 
 interface Live {
   frame: HTMLIFrameElement;
-  loads: number;
+  /** The browsing context of the last load. Moving the iframe in the DOM gives it a new one. */
+  win: Window | null;
   started: number;
   lastBeat: number;
   /** Set by the frame's first message; until then a silent frame is still loading, not busy. */
@@ -133,17 +134,27 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
   };
 
   const start = () => {
-    if (live || stopped || !wanted || !visible || document.hidden) return;
+    // keepLoaded (the carousel) starts every widget at once: the PDF needs the ones not yet scrolled to.
+    if (live || stopped || !wanted) return;
+    if (!opts.keepLoaded && (!visible || document.hidden)) return;
     const frame = make("iframe", { title: el.dataset.title ?? "Interactive widget", src: `${opts.sandboxOrigin}/w/${hash}?theme=${isDark() ? "dark" : "light"}` });
     frame.setAttribute("sandbox", "allow-scripts");
     frame.setAttribute("allow", "");
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.setAttribute("credentialless", "");
     frame.style.height = `${height}px`;
-    const l: Live = { frame, loads: 0, started: Date.now(), lastBeat: Date.now(), heard: false, strikes: 0 };
+    const l: Live = { frame, win: null, started: Date.now(), lastBeat: Date.now(), heard: false, strikes: 0 };
     frame.onload = () => {
-      // A second load means the widget navigated its own frame somewhere else.
-      if (++l.loads > 1) kill("This widget tried to navigate away and was stopped.");
+      const win = frame.contentWindow;
+      // Another load in the same browsing context means the widget navigated its own frame somewhere else.
+      if (l.win && win === l.win) return kill("This widget tried to navigate away and was stopped.");
+      // First load, or the iframe was moved in the DOM (the carousel moves blocks onto continuation
+      // slides), which reloads it from our own URL in a fresh context: start the clock again.
+      if (l.win) {
+        l.started = l.lastBeat = Date.now();
+        l.heard = false;
+      }
+      l.win = win;
     };
     live = l;
     stage.replaceChildren(frame);
@@ -208,6 +219,7 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
 
   el.replaceChildren(box, ...(liveLinkEl ? [liveLinkEl] : []));
   showStatic();
+  if (opts.keepLoaded) start();
 }
 
 function liveLink(url: string): HTMLElement {
