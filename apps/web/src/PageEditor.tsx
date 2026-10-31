@@ -55,6 +55,9 @@ export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
   const [quote, setQuote] = useState<string>();
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
   const [view, setView] = useState<"page" | "markdown">("page");
+  // An open suggestion takes over the editor and preview to show its diff.
+  const [reviewSlot, setReviewSlot] = useState<HTMLDivElement | null>(null);
+  const [reviewing, setReviewing] = useState(false);
 
   const editor = useRef<SourceEditorHandle>(null);
   const preview = useRef<HTMLDivElement>(null);
@@ -315,7 +318,7 @@ export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
         </p>
       )}
       <div className="editor-body">
-      <div className={`workspace mode-${mode}${panel !== "none" ? " with-panel" : ""}`}>
+      <div className={`workspace mode-${mode}${panel !== "none" ? " with-panel" : ""}${reviewing && panel === "suggestions" ? " reviewing" : ""}`}>
         <SourceEditor
           ref={editor}
           value={opened.source}
@@ -356,6 +359,7 @@ export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
             </div>
           )}
         </div>
+        <div className="review-slot" ref={setReviewSlot} />
         {panel === "history" && (
           <HistoryPanel
             pageId={pageId}
@@ -373,6 +377,8 @@ export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
             refreshKey={suggestionsKey}
             beforeApply={() => saveSerial(false)}
             onApplied={() => void load().then(onChanged)}
+            reviewSlot={reviewSlot}
+            onReviewing={setReviewing}
           />
         )}
         {panel === "insights" && <InsightsPanel pageId={pageId} onSuggested={(id) => (setSuggestionsKey((k) => k + 1), setPanel("suggestions"), void id)} />}
