@@ -1367,18 +1367,18 @@ export function createApp(deps: AppDeps) {
     const canonical = pageUrl(space, path);
     const isPublic = space.visibility === "public";
     const viewer = c.get("viewer");
+    // Members and verified workspaces run widgets at once; other public readers click to run.
+    const autorun = Boolean(viewer?.role) || !isPublic || (await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))).verified;
 
     if (requested === "present" || requested === "carousel") {
       const source = level?.source ?? (await pagesSvc.readRevision(deps, page.publishedRevisionId, "source"));
       const slides = await Promise.all(elemnt.toSlides(elemnt.parse(source)).map(async (sl) => ({ ...sl, html: await widgetsSvc.decorateWidgets(deps.db, sl.html) })));
-      return html(c, renderDeck({ nonce: c.get("nonce"), title: page.title, canonicalUrl: canonical, slides, mode: requested, look: await lookFor(c.get("workspaceId"), page.publishedRevisionId), ...(sandboxUrl ? { sandboxUrl } : {}) }));
+      return html(c, renderDeck({ nonce: c.get("nonce"), title: page.title, canonicalUrl: canonical, slides, mode: requested, autorun, look: await lookFor(c.get("workspaceId"), page.publishedRevisionId), ...(sandboxUrl ? { sandboxUrl } : {}) }));
     }
 
     const stored = level ? (view === "page" ? level.html : level.markdown) : await pagesSvc.readRevision(deps, page.publishedRevisionId, view === "page" ? "html" : "markdown");
     const body = view === "page" ? await widgetsSvc.decorateWidgets(deps.db, stored) : stored;
-    // Members and verified workspaces run widgets at once; other public readers click to run.
     const repoLink = await reposSvc.getLink(deps, page.id);
-    const autorun = Boolean(viewer?.role) || !isPublic || (await widgetsSvc.widgetSettings(deps.db, c.get("workspaceId"))).verified;
     const levels = await levelsSvc.approvedLevels(deps, page.id);
     return html(
       c,
