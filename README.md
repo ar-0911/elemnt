@@ -2,6 +2,13 @@
 
 **Docs written once, read two ways: as rich, interactive pages for people, and as clean Markdown for AI agents.**
 
+<a href="https://docs.adityapoc.xyz/r/ar-0911/elemnt">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://docs.adityapoc.xyz/r/ar-0911/elemnt/card.svg?theme=dark">
+    <img alt="ar-0911/elemnt, explained on Elemnt" src="https://docs.adityapoc.xyz/r/ar-0911/elemnt/card.svg">
+  </picture>
+</a>
+
 Elemnt is a self-hostable documentation platform built for teams that work with AI. You write a page in Markdown with a few component blocks. Elemnt publishes it two ways from the same source: as an interactive page for your readers (charts, sliders, quizzes, runnable code, diagrams), and as plain Markdown for Claude and other agents. Claude can read your docs, draft new pages and suggest edits, but nothing goes live until a person approves it.
 
 ![A page in the Elemnt reader: tabs, a chart and a sortable table](docs/images/reader.png)
