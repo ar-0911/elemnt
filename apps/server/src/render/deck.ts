@@ -16,6 +16,8 @@ export interface DeckInput {
   slides: { title: string | undefined; html: string; cover?: boolean }[];
   mode: "present" | "carousel";
   sandboxUrl?: string;
+  /** Run widgets without a click (members and verified workspaces), as on the page. */
+  autorun?: boolean;
   look?: Look;
 }
 
@@ -30,7 +32,7 @@ const BASE = `${themeTokensCss}
 ${contentCss}
 .slide-frame{width:calc(var(--w) * var(--s,1));height:calc(var(--h) * var(--s,1));overflow:hidden;flex:none}
 .slide-stage{width:var(--w);height:var(--h);transform:scale(var(--s,1));transform-origin:0 0;display:flex;flex-direction:column;padding:var(--pad);background:var(--bg);font-size:var(--fs);line-height:1.5}
-.slide-body.elemnt-page{flex:1;min-height:0;max-width:none;margin:0;padding:0;overflow:hidden}
+.slide-body.elemnt-page{--gap:.9em;flex:1;min-height:0;max-width:none;margin:0;padding:0;overflow:hidden}
 .slide-fit{transform-origin:0 0}
 .slide-body > :first-child,.slide-fit > :first-child{margin-top:0}.slide-body > :last-child,.slide-fit > :last-child{margin-bottom:0}
 .slide-cover .slide-body{display:flex;flex-direction:column;justify-content:center}
@@ -67,8 +69,10 @@ body{background:#888}
 .elemnt-slide{--w:540px;--h:675px;--s:2;--fs:17px;--pad:48px 40px 22px;width:fit-content;margin:24px auto;break-after:page;break-inside:avoid}
 .slide-body .elemnt-cards{grid-template-columns:1fr}
 .slide-body .elemnt-art:not(.elemnt-art-waves,.elemnt-art-grid){opacity:.25}
+.slide-body elemnt-widget .elemnt-widget-label{display:none}
+.elemnt-widget-live{margin:.5em 0 0;font:600 12px/1.4 var(--font-body,system-ui);color:var(--muted);text-align:center}.elemnt-widget-live a{color:var(--accent)}
 .print-hint{max-width:1080px;margin:24px auto 0;padding:14px 18px;background:var(--surface);border-radius:8px;font:15px system-ui}
-@media print{body{background:none}.elemnt-slide{margin:0}.print-hint{display:none}}`;
+@media print{body{background:none}.elemnt-slide{margin:0}.print-hint,.elemnt-widget-run{display:none}}`;
 
 export function renderDeck(d: DeckInput): string {
   const t = escapeHtml(d.title);
@@ -90,10 +94,12 @@ export function renderDeck(d: DeckInput): string {
       ? `import { enhance, mountDeck } from "/assets/elements.js";
 const cfg = JSON.parse(document.getElementById("elemnt-config").textContent);
 const deck = document.querySelector(".deck");
-enhance(deck, { sandboxOrigin: cfg.sandboxUrl ?? undefined, widgets: { autorun: false } });
+enhance(deck, { sandboxOrigin: cfg.sandboxUrl ?? undefined, widgets: { autorun: Boolean(cfg.autorun) } });
 mountDeck(deck);`
       : `import { enhance, fitSlides } from "/assets/elements.js";
-enhance(document.body, {});
+const cfg = JSON.parse(document.getElementById("elemnt-config").textContent);
+// Widgets run and stay loaded so the printed PDF shows them as they look, with a link to the live page.
+enhance(document.body, { sandboxOrigin: cfg.sandboxUrl ?? undefined, widgets: { autorun: Boolean(cfg.autorun), keepLoaded: true, liveUrl: cfg.liveUrl } });
 document.fonts.ready.then(() => fitSlides(document.body));
 document.getElementById("print")?.addEventListener("click", () => print());`;
   return `<!doctype html>
@@ -104,7 +110,7 @@ document.getElementById("print")?.addEventListener("click", () => print());`;
 ${lookHead(d.nonce, d.look)}
 </head><body${bodyClass(d.look)}>
 ${body}
-<script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: d.sandboxUrl ?? null })}</script>
+<script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: d.sandboxUrl ?? null, autorun: Boolean(d.autorun), liveUrl: d.canonicalUrl })}</script>
 <script type="module" nonce="${d.nonce}">${script}</script>
 </body></html>`;
 }

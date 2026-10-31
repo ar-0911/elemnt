@@ -22,6 +22,10 @@ export interface WidgetOptions {
   sandboxOrigin: string;
   /** Run without a click. False on public pages of unverified workspaces. */
   autorun?: boolean;
+  /** Keep frames loaded off screen and in background tabs, for printing (the LinkedIn carousel). */
+  keepLoaded?: boolean;
+  /** Adds "Try it live" with this link under the widget, for static copies such as the carousel PDF. */
+  liveUrl?: string;
   /** POSTs a report; omitted in the editor. */
   report?(hash: string, reason: string): Promise<void>;
 }
@@ -75,6 +79,7 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
   const stage = make("div");
   stage.style.minHeight = `${height}px`;
   box.append(label, stage);
+  const liveLinkEl = opts.liveUrl ? liveLink(opts.liveUrl) : undefined;
 
   if (el.dataset.blocked) {
     stage.append(make("p", { className: "elemnt-widget-summary", textContent: `This widget was disabled: ${el.dataset.blocked}` }));
@@ -185,11 +190,11 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
     visible = Boolean(entry?.isIntersecting);
     clearTimeout(offscreenTimer);
     if (visible) start();
-    else offscreenTimer = window.setTimeout(() => (unload(), showStatic()), OFFSCREEN_UNLOAD_MS);
+    else if (!opts.keepLoaded) offscreenTimer = window.setTimeout(() => (unload(), showStatic()), OFFSCREEN_UNLOAD_MS);
   });
   io.observe(el);
 
-  const onVisibility = () => (document.hidden ? (unload(), showStatic()) : start());
+  const onVisibility = () => (document.hidden ? opts.keepLoaded || (unload(), showStatic()) : start());
   document.addEventListener("visibilitychange", onVisibility);
   const offTheme = onThemeChange((dark) => live?.frame.contentWindow?.postMessage(themeMessage(el, dark), "*"));
 
@@ -201,6 +206,18 @@ function setup(el: HTMLElement, opts: WidgetOptions) {
     offTheme();
   }
 
-  el.replaceChildren(box);
+  el.replaceChildren(box, ...(liveLinkEl ? [liveLinkEl] : []));
   showStatic();
+}
+
+function liveLink(url: string): HTMLElement {
+  const p = make("p", { className: "elemnt-widget-live", textContent: "Interactive on the page: " });
+  let shown = url;
+  try {
+    const u = new URL(url, location.href);
+    shown = u.host + u.pathname;
+    url = u.href;
+  } catch {}
+  p.append(make("a", { href: url, textContent: shown }));
+  return p;
 }

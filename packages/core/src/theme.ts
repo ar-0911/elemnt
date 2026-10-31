@@ -83,6 +83,42 @@ body.elemnt-styled::before{position:fixed}
 @media (prefers-reduced-motion:reduce){.elemnt-styled::before,.elemnt-orbit,.elemnt-wave{animation:none!important}.elemnt-graphic svg *{animation:none!important}}
 `;
 
+
+/**
+ * Spacing and rhythm, applied last so it sets the baseline for every block:
+ * a readable measure, generous space between sections, one consistent gap
+ * between components, and roomier padding inside them.
+ */
+const rhythmCss = `
+.elemnt-page{--gap:clamp(24px,3.2vw,36px)}.elemnt-page:not(.slide-body){font-size:17px;line-height:1.7}
+.elemnt-page:not(.slide-body) :is(p,ul,ol){margin:0 0 1.05em}
+.elemnt-page:not(.slide-body) h2:not([class]){font-size:clamp(1.5rem,2.6vw,1.9rem);margin:calc(var(--gap)*2.1) 0 .55em}
+.elemnt-page:not(.slide-body) h3:not([class]){font-size:1.2rem;margin:calc(var(--gap)*1.3) 0 .45em}
+.elemnt-page:not(.slide-body) li+li{margin-top:.35em}
+.elemnt-page .elemnt-band-inner > :first-child{margin-top:0}
+.elemnt-page pre{padding:16px 20px;line-height:1.6}
+.elemnt-page th,.elemnt-page td{padding:10px 14px;line-height:1.5}.elemnt-page th{text-align:left}
+.elemnt-page :is(.elemnt-callout,.elemnt-details,.elemnt-explore,.elemnt-quiz,.elemnt-compare,.elemnt-snippet,.elemnt-filetree,.elemnt-repo,.elemnt-annotate,.elemnt-cards,.elemnt-stats,.elemnt-timeline,elemnt-widget,elemnt-tabs,.elemnt-steps,figure.elemnt-diagram,figure.elemnt-chart,figure.elemnt-datagrid,.elemnt-graphic){margin-block:var(--gap)}
+.elemnt-page .elemnt-details+.elemnt-details{margin-top:calc(var(--gap)*-.6)}
+.elemnt-callout{padding:16px 22px}.elemnt-callout > :first-child{margin-top:0}.elemnt-callout > :last-child{margin-bottom:0}.elemnt-callout-title{margin-bottom:.35em}
+.elemnt-details{padding:14px 22px}.elemnt-details[open] > summary{margin-bottom:.8em}.elemnt-details > :last-child{margin-bottom:0}
+.elemnt-explore{padding:18px 22px}.elemnt-explore > :last-child{margin-bottom:0}
+.elemnt-quiz{padding:20px 24px}.elemnt-quiz-question{margin-top:0}.elemnt-quiz-options{margin:.6em 0}elemnt-quiz[data-ready] .elemnt-quiz-option{padding:6px 10px;margin:2px 0}.elemnt-quiz-why{padding-top:12px;margin-top:12px}.elemnt-quiz-why > :last-child{margin-bottom:0}
+.elemnt-compare{gap:20px}.elemnt-side{padding:18px 22px}.elemnt-side-label{margin-top:0}.elemnt-side > :last-child{margin-bottom:0}
+.elemnt-cards{gap:20px}.elemnt-card{padding:24px 26px}.elemnt-card-title{margin:14px 0 6px}.elemnt-card p{line-height:1.6}
+.elemnt-stats{gap:20px}.elemnt-stat{padding:20px 22px}
+.elemnt-timeline{padding-left:32px}.elemnt-event{margin-bottom:28px}
+.elemnt-repo{padding:22px 26px}.elemnt-filetree{padding:16px 20px}
+.elemnt-snippet figcaption{padding:10px 18px}.elemnt-page .elemnt-snippet pre{padding:14px 0}
+.elemnt-steps li{margin:20px 0}
+.tablist{margin-bottom:18px}.tablist button{padding:10px 14px}
+.elemnt-band{margin-block:calc(var(--gap)*2);padding-block:calc(var(--gap)*1.6)}
+.elemnt-hero{margin-bottom:calc(var(--gap)*1.6)}
+.elemnt-datagrid-filter{padding:8px 12px;margin-bottom:12px}
+figure.elemnt-diagram figcaption,figure.elemnt-chart figcaption,figure.elemnt-datagrid figcaption{margin-top:10px}
+@media (max-width:640px){.elemnt-page:not(.slide-body){font-size:16px}.elemnt-card,.elemnt-quiz,.elemnt-side{padding:18px}}
+`;
+
 export const contentCss = `
 .elemnt-page{font-family:var(--font-body,system-ui,sans-serif)}.elemnt-page :is(h1,h2,h3,h4){font-family:var(--font-head,inherit);letter-spacing:-.01em}
 .elemnt-page :is(h1,h2,h3){line-height:1.2;text-wrap:balance}a{color:var(--accent)}
@@ -162,5 +198,5 @@ elemnt-run{display:block;position:relative}elemnt-run .elemnt-run-bar{display:fl
 .elemnt-run-output[data-error]{color:var(--danger)}
 [data-elemnt-invalid]{outline:2px dashed var(--danger);outline-offset:4px}
 ${layoutCss}
+${rhythmCss}
 `;
-
