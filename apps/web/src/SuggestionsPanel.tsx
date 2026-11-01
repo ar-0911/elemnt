@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, ApiError, type SuggestionDetail, type SuggestionSummary } from "./api";
+import { SuggestionReview } from "./SuggestionReview";
+import { buildLineDiff } from "./suggestionDiff";
 
 const ORIGIN: Record<SuggestionSummary["origin"], string> = { assist: "Claude (editor)", mcp: "Claude (agent)", drift: "Repo check", ask: "Reader questions" };
 
@@ -13,16 +16,23 @@ interface Props {
   /** Saves pending edits first, so accepting never throws away typing. */
   beforeApply(): Promise<void>;
   onApplied(): void;
+  /** Where the full review shows, in place of the editor and preview. */
+  reviewSlot: HTMLElement | null;
+  /** Tells the editor whether a review is taking over the workspace. */
+  onReviewing(reviewing: boolean): void;
 }
 
 /** Review AI and agent suggestions hunk by hunk. Nothing changes until a person accepts. */
-export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApply, onApplied }: Props) {
+export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApply, onApplied, reviewSlot, onReviewing }: Props) {
   const [items, setItems] = useState<SuggestionSummary[]>([]);
   const [open, setOpen] = useState<string | undefined>(focus);
   const [detail, setDetail] = useState<SuggestionDetail>();
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const reviewing = Boolean(detail && detail.suggestion.status === "open");
+  useEffect(() => onReviewing(reviewing), [reviewing, onReviewing]);
+  useEffect(() => () => onReviewing(false), [onReviewing]);
 
   const refresh = useCallback(() => {
     void api.get<SuggestionSummary[]>(`/api/pages/${pageId}/suggestions`).then((list) => {
@@ -36,16 +46,16 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
   }, [focus, refreshKey]);
 
   useEffect(() => {
-    setDetail(undefined);
     setError(undefined);
-    if (!open) return;
+    // Keep showing the previous suggestion until the next one loads, so the editor doesn't flash.
+    if (!open) return setDetail(undefined);
     void api
       .get<SuggestionDetail>(`/api/suggestions/${open}`)
       .then((d) => {
         setDetail(d);
         setPicked(new Set(d.hunks.map((h) => h.index)));
       })
-      .catch((e: ApiError) => setError(e.message));
+      .catch((e: ApiError) => (setDetail(undefined), setError(e.message)));
   }, [open, refreshKey]);
 
   async function decide(accept: boolean) {
@@ -69,6 +79,11 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
       setBusy(false);
     }
   }
+
+  const close = useCallback(() => {
+    setOpen(undefined);
+    setDetail(undefined);
+  }, []);
 
   const toggle = (i: number) =>
     setPicked((p) => {
@@ -94,37 +109,43 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
         ))}
       </ul>
       {error && <p className="error">{error}</p>}
-      {detail && detail.suggestion.status === "open" && (
+      {detail && reviewing && (
         <div className="review">
-          {detail.stale && <p className="hint">The page changed since this was written. Accepting merges the picked changes into the current version.</p>}
-          {detail.hunks.map((h) => (
-            <label key={h.index} className="hunk">
-              {canEdit && detail.hunks.length > 1 && <input type="checkbox" checked={picked.has(h.index)} onChange={() => toggle(h.index)} />}
-              <pre className="diff">
-                <div className="hunk">
-                  @@ line {h.oldStart} @@
-                </div>
-                {h.lines.map((l, i) => (
-                  <div key={i} className={l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : ""}>
-                    {l}
-                  </div>
-                ))}
-              </pre>
-            </label>
-          ))}
-          {canEdit && (
-            <p className="row">
-              <button type="button" className="btn primary" disabled={busy || picked.size === 0} onClick={() => void decide(true)}>
-                {picked.size === detail.hunks.length ? "Accept" : `Accept ${picked.size} of ${detail.hunks.length}`}
-              </button>
-              <button type="button" className="btn" disabled={busy} onClick={() => void decide(false)}>
-                Reject
-              </button>
-            </p>
-          )}
-          <p className="hint">Accepting saves a draft. Publish when you're happy with it.</p>
+          <ReviewSummary detail={detail} />
+          <p className="hint">
+            The changes are open next to this list. Use <kbd>j</kbd> and <kbd>k</kbd> to step through them{canEdit && detail.hunks.length > 1 ? ", and untick any you don't want" : ""}. Accepting saves a draft; publish when you're happy with it.
+          </p>
         </div>
       )}
+      {detail &&
+        reviewing &&
+        reviewSlot &&
+        createPortal(
+          <SuggestionReview
+            detail={detail}
+            origin={ORIGIN[detail.suggestion.origin]}
+            canEdit={canEdit}
+            picked={picked}
+            busy={busy}
+            onToggle={toggle}
+            onDecide={(accept) => void decide(accept)}
+            onClose={close}
+          />,
+          reviewSlot,
+        )}
     </section>
+  );
+}
+
+function ReviewSummary({ detail }: { detail: SuggestionDetail }) {
+  const { added, removed } = buildLineDiff(detail.base, detail.proposed, detail.hunks);
+  return (
+    <p className="sreview-stats">
+      <span className="plus">+{added}</span>
+      <span className="minus">−{removed}</span>
+      <span className="muted">
+        in {detail.hunks.length} place{detail.hunks.length === 1 ? "" : "s"}
+      </span>
+    </p>
   );
 }

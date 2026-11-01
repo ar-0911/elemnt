@@ -16,6 +16,8 @@ export async function createSuggestion(
   const base = input.baseRevisionId ?? headRevisionId(page);
   if (!base) throw new HttpError(400, "This page has no revisions yet.");
   const current = await readRevision(deps, base, "source");
+  // Agents on Windows can send CRLF; without this every line shows as changed.
+  if (!current.includes("\r")) input = { ...input, proposed: input.proposed.replace(/\r\n?/g, "\n") };
   if (current === input.proposed) throw new HttpError(422, "The suggestion doesn't change anything.");
   const proposedHash = sha256(input.proposed);
   await deps.blobs.put(proposedHash, input.proposed);
@@ -44,11 +46,15 @@ async function load(deps: PageDeps, id: string) {
 
 /** The suggestion with its hunks, and whether the page moved on since it was written. */
 export async function getSuggestion(deps: PageDeps, id: string) {
-  const { s, patch } = await load(deps, id);
+  const { s, base, proposed, patch } = await load(deps, id);
   const page = await getPage(deps.db, s.pageId);
+  const [author] = s.authorId ? await deps.db.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, s.authorId)) : [];
   return {
-    suggestion: s,
+    suggestion: { ...s, authorName: author?.name ?? null, authorEmail: author?.email ?? null },
     stale: headRevisionId(page) !== s.baseRevisionId,
+    // Both full sources, so reviewers can see each change in context and rendered.
+    base,
+    proposed,
     hunks: patch.hunks.map((h, index) => ({ index, oldStart: h.oldStart, oldLines: h.oldLines, newStart: h.newStart, newLines: h.newLines, lines: h.lines })),
   };
 }

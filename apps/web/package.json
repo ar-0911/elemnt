@@ -21,6 +21,7 @@
     "@elemnt/core": "workspace:*",
     "@elemnt/elements": "workspace:*",
     "@lezer/highlight": "1.2.1",
+    "diff": "^8.0.4",
     "mermaid": "11.4.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",

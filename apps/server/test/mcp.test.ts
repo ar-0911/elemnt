@@ -85,6 +85,16 @@ describe("MCP server", () => {
     expect((await callTool(t.ownerToken, "get_page", { space: "docs", path: "deploy" })).text).not.toContain("dashboard");
     const detail = await (await t.call(`/api/suggestions/${sug.suggestionId}`, { token: t.ownerToken })).json();
     expect(detail.suggestion.origin).toBe("mcp");
+    // Reviewers get both full sources, to show each change in context and rendered.
+    expect(detail.proposed).toContain("Watch the dashboard.");
+    expect(detail.base).not.toContain("Watch the dashboard.");
+
+    // A CRLF page from an agent must not show every line as changed.
+    const page = (await callTool(t.ownerToken, "get_page", { space: "docs", path: "deploy", format: "source" })).text.replace(/^<!--.*-->\n/, "");
+    const crlf = JSON.parse((await callTool(t.ownerToken, "suggest_edit", { space: "docs", path: "deploy", summary: "CRLF", source: `${page}\nOne more line.\n`.replace(/\n/g, "\r\n") })).text);
+    const crlfDetail = await (await t.call(`/api/suggestions/${crlf.suggestionId}`, { token: t.ownerToken })).json();
+    expect(crlfDetail.proposed).not.toContain("\r");
+    expect(crlfDetail.hunks).toHaveLength(1);
 
     const ambiguous = await callTool(t.ownerToken, "suggest_edit", { space: "docs", path: "deploy", summary: "x", edits: [{ find: "the", replace: "a" }] });
     expect(ambiguous.isError).toBe(true);

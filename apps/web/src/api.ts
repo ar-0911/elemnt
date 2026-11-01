@@ -148,6 +148,9 @@ export interface SuggestionSummary {
 export interface SuggestionDetail {
   suggestion: SuggestionSummary & { baseRevisionId: string };
   stale: boolean;
+  /** The page source the suggestion was written against, and the suggested source. */
+  base: string;
+  proposed: string;
   hunks: Hunk[];
 }
 
