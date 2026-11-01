@@ -4,6 +4,7 @@ import { suggestions, users } from "../db/schema.js";
 import { sha256 } from "../lib/crypto.js";
 import { newId } from "../lib/ids.js";
 import { HttpError } from "./errors.js";
+import { conflictingHunks, merge3 } from "./merge.js";
 import { getPage, headRevisionId, readRevision, updatePage, type PageDeps } from "./pages.js";
 
 type Origin = (typeof suggestions.$inferSelect)["origin"];
@@ -48,10 +49,15 @@ async function load(deps: PageDeps, id: string) {
 export async function getSuggestion(deps: PageDeps, id: string) {
   const { s, base, proposed, patch } = await load(deps, id);
   const page = await getPage(deps.db, s.pageId);
+  const head = headRevisionId(page);
+  const stale = s.status === "open" && head !== null && head !== s.baseRevisionId;
+  const current = stale ? await readRevision(deps, head, "source") : base;
   const [author] = s.authorId ? await deps.db.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, s.authorId)) : [];
   return {
     suggestion: { ...s, authorName: author?.name ?? null, authorEmail: author?.email ?? null },
-    stale: headRevisionId(page) !== s.baseRevisionId,
+    stale,
+    // Hunks that touch lines someone edited since; these can't be applied as they are.
+    conflicts: stale ? conflictingHunks(base, current, patch) : [],
     // Both full sources, so reviewers can see each change in context and rendered.
     base,
     proposed,
@@ -73,10 +79,19 @@ export async function acceptSuggestion(deps: PageDeps, input: { id: string; user
 
   const page = await getPage(deps.db, s.pageId);
   const head = headRevisionId(page)!;
-  const target = head === s.baseRevisionId ? base : await readRevision(deps, head, "source");
-  const merged = applyPatch(target, chosen);
-  if (merged === false) {
-    throw new HttpError(409, "The page changed in the same places since this suggestion was written. Ask for a fresh suggestion.", { currentRevisionId: head });
+  const theirs = applyPatch(base, chosen);
+  if (theirs === false) throw new Error(`Suggestion ${s.id} doesn't apply to its own base`);
+  let merged = theirs;
+  if (head !== s.baseRevisionId) {
+    const current = await readRevision(deps, head, "source");
+    const out = merge3(base, current, theirs);
+    if ("conflict" in out) {
+      throw new HttpError(409, "Someone edited the same lines after this suggestion was written, so some changes can't be applied as they are.", {
+        currentRevisionId: head,
+        conflicts: conflictingHunks(base, current, chosen).map((i) => patch.hunks.indexOf(chosen.hunks[i]!)),
+      });
+    }
+    merged = out.merged;
   }
   const saved = await updatePage(deps, { pageId: s.pageId, source: merged, baseRevisionId: head, authorId: input.userId, message: `Accepted suggestion: ${s.summary}`, publish: false });
   await deps.db

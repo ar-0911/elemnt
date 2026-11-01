@@ -12,9 +12,11 @@ interface Props {
   origin: string;
   canEdit: boolean;
   picked: Set<number>;
-  busy: boolean;
+  busy: false | "deciding" | "redoing";
+  error: string | undefined;
   onToggle(index: number): void;
   onDecide(accept: boolean): void;
+  onRedo(): void;
   onClose(): void;
 }
 
@@ -29,7 +31,7 @@ const MODE_KEY = "diff-mode";
  * Shows exactly what a suggestion changes: the edited lines with the changed
  * words highlighted, side by side, or rendered. Unchanged stretches fold away.
  */
-export function SuggestionReview({ detail, origin, canEdit, picked, busy, onToggle, onDecide, onClose }: Props) {
+export function SuggestionReview({ detail, origin, canEdit, picked, busy, error, onToggle, onDecide, onRedo, onClose }: Props) {
   const [mode, setMode] = useState<DiffMode>(() => (local.get(MODE_KEY) as DiffMode | null) ?? "inline");
   const diff = useMemo(() => buildLineDiff(detail.base, detail.proposed, detail.hunks), [detail]);
   const body = useRef<HTMLDivElement>(null);
@@ -107,21 +109,22 @@ export function SuggestionReview({ detail, origin, canEdit, picked, busy, onTogg
         </button>
         {canEdit && (
           <>
-            <button type="button" className="btn" disabled={busy} onClick={() => onDecide(false)}>
+            <button type="button" className="btn" disabled={Boolean(busy)} onClick={() => onDecide(false)}>
               Reject
             </button>
-            <button type="button" className="btn primary" disabled={busy || picked.size === 0} onClick={() => onDecide(true)}>
+            <button type="button" className="btn primary" disabled={Boolean(busy) || picked.size === 0} onClick={() => onDecide(true)}>
               {picked.size === detail.hunks.length ? "Accept" : `Accept ${picked.size} of ${detail.hunks.length}`}
             </button>
           </>
         )}
       </div>
-      {detail.stale && <p className="banner">The page changed since this was written. Accepting merges the picked changes into the current version.</p>}
+      {detail.stale && <StaleNote detail={detail} canEdit={canEdit} busy={busy} onRedo={onRedo} />}
+      {error && <p className="banner error-banner">{error}</p>}
       <div className="sreview-body" ref={body}>
         {mode === "rendered" ? (
           <RenderedDiff base={detail.base} proposed={detail.proposed} onCount={setRenderedChanges} />
         ) : (
-          <LineDiffView blocks={diff.blocks} split={mode === "split"} hunks={detail.hunks.length} selectable={canEdit && many} picked={picked} onToggle={onToggle} />
+          <LineDiffView blocks={diff.blocks} split={mode === "split"} hunks={detail.hunks.length} selectable={canEdit && (many || detail.conflicts.length > 0)} conflicts={detail.conflicts} picked={picked} onToggle={onToggle} />
         )}
       </div>
     </section>
@@ -139,7 +142,7 @@ function Text({ row }: { row: Row }) {
 
 const SIGN = { ctx: " ", del: "−", add: "+" } as const;
 
-function LineDiffView({ blocks, split, hunks, selectable, picked, onToggle }: { blocks: Block[]; split: boolean; hunks: number; selectable: boolean; picked: Set<number>; onToggle(i: number): void }) {
+function LineDiffView({ blocks, split, hunks, selectable, conflicts, picked, onToggle }: { blocks: Block[]; split: boolean; hunks: number; selectable: boolean; conflicts: number[]; picked: Set<number>; onToggle(i: number): void }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
   return (
     <div className={`ldiff${split ? " split" : ""}`} role="table">
@@ -156,12 +159,13 @@ function LineDiffView({ blocks, split, hunks, selectable, picked, onToggle }: { 
         const first = b.rows.find((r) => r.kind !== "ctx");
         const line = first?.old ?? first?.new ?? 1;
         const on = picked.has(b.index);
+        const clash = conflicts.includes(b.index);
         return (
-          <div key={bi} className={`ldiff-hunk${selectable && !on ? " skipped" : ""}`}>
+          <div key={bi} className={`ldiff-hunk${selectable && !on ? " skipped" : ""}${clash ? " clash" : ""}`}>
             <div className="ldiff-head" data-change={b.index}>
               {selectable ? (
                 <label>
-                  <input type="checkbox" checked={on} onChange={() => onToggle(b.index)} /> Change {b.index + 1} of {hunks}
+                  <input type="checkbox" checked={on} disabled={clash} onChange={() => onToggle(b.index)} /> Change {b.index + 1} of {hunks}
                 </label>
               ) : (
                 <span>
@@ -169,7 +173,7 @@ function LineDiffView({ blocks, split, hunks, selectable, picked, onToggle }: { 
                 </span>
               )}
               <span className="muted">line {line}</span>
-              {selectable && !on && <span className="muted">· won't be applied</span>}
+              {clash ? <span className="clash-tag">Overlaps a newer edit</span> : selectable && !on && <span className="muted">· won't be applied</span>}
             </div>
             <Rows rows={b.rows} split={split} />
           </div>
@@ -221,6 +225,35 @@ function RenderedDiff({ base, proposed, onCount }: { base: string; proposed: str
     <div className="rdiff-wrap">
       {out.changes === 0 && <p className="hint pad">The rendered page looks the same; the change is in the Markdown only. Switch to Changes to see it.</p>}
       <Preview html={out.html} widgets={after.widgets} {...(after.style ? { pageStyle: after.style } : {})} />
+    </div>
+  );
+}
+
+/** Explains what changed on the page since the suggestion, and offers to redo it when changes collide. */
+function StaleNote({ detail, canEdit, busy, onRedo }: { detail: SuggestionDetail; canEdit: boolean; busy: Props["busy"]; onRedo(): void }) {
+  const n = detail.conflicts.length;
+  const total = detail.hunks.length;
+  if (n === 0)
+    return (
+      <p className="banner info-banner">
+        The page was edited after this suggestion was written. None of those edits touch the same lines, so accepting keeps both.
+      </p>
+    );
+  return (
+    <div className="banner clash-banner" role="status">
+      <p>
+        {n === total
+          ? n === 1
+            ? "The lines this suggestion changes were edited after it was written, so it can't be applied as it is."
+            : "Every change here touches lines that were edited after this suggestion was written, so none can be applied as they are."
+          : `${n} of ${total} changes touch lines that were edited after this suggestion was written. They're unticked below; you can accept the other ${total - n}.`}{" "}
+        Claude can redo it on the latest version, keeping those edits.
+      </p>
+      {canEdit && (
+        <button type="button" className="btn primary small" disabled={Boolean(busy)} onClick={onRedo}>
+          {busy === "redoing" ? "Redoing…" : "Redo on the latest version"}
+        </button>
+      )}
     </div>
   );
 }
