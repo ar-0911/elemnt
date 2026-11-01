@@ -78,6 +78,11 @@ export const EDIT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/** Redo a suggestion that no longer fits: the same change, applied to the page as it is now. */
+export function redoPrompt(input: { source: string; summary: string; intendedDiff: string }): string {
+  return `Here is the full page source as it is now:\n\n<page>\n${input.source}\n</page>\n\nAn earlier suggestion was written against an older version of this page, and someone has since edited the same lines. Its summary was: ${input.summary}\n\nThis is the diff it intended, against the older version:\n\n<diff>\n${input.intendedDiff}\n</diff>\n\nMake the same change to the current page. Keep every edit that was made since, and don't change anything else. Return the complete revised page source as "replacement" and a one-sentence "summary".`;
+}
+
 export function assistPrompt(input: { source: string; instruction: string; selection?: { from: number; to: number } }): string {
   if (!input.selection) {
     return `Here is the full page source:\n\n<page>\n${input.source}\n</page>\n\nInstruction: ${input.instruction}\n\nReturn the complete revised page source as "replacement".`;

@@ -118,6 +118,58 @@ describe("assist and suggestions", () => {
     expect((await t.call(`/api/suggestions/${s2.id}/accept`, { method: "POST", token: t.ownerToken, json: {} })).status).toBe(409);
   });
 
+  it("merges edits that sit near, but not on, newer edits", async () => {
+    // Before the three-way merge this failed: the edit two lines away broke the patch's context.
+    const s = await suggestWhole(SOURCE.replace("Deploy with the canary pipeline.", "Deploy with the canary pipeline, then watch the dashboard."));
+    const edited = SOURCE.replace("## Deploy", "## Deploying");
+    await t.call(`/api/pages/${pageId}`, { method: "PUT", token: t.ownerToken, json: { source: edited, baseRevisionId: rev1, publish: false } });
+    const detail = await (await t.call(`/api/suggestions/${s.id}`, { token: t.ownerToken })).json();
+    expect(detail).toMatchObject({ stale: true, conflicts: [] });
+    const res = await t.call(`/api/suggestions/${s.id}/accept`, { method: "POST", token: t.ownerToken, json: {} });
+    expect(res.status).toBe(200);
+    const merged = (await res.json()).source;
+    expect(merged).toContain("## Deploying");
+    expect(merged).toContain("then watch the dashboard.");
+  });
+
+  it("names the changes that collide, applies the rest, and can redo the suggestion on the latest version", async () => {
+    const lines = SOURCE.split("\n");
+    lines[5] = "Run the new installer.";
+    lines[13] = "Revert the tag and redeploy.";
+    const s = await suggestWhole(lines.join("\n"));
+    const edited = SOURCE.replace("Run the installer.", "Run the installer twice.");
+    const saved = await (await t.call(`/api/pages/${pageId}`, { method: "PUT", token: t.ownerToken, json: { source: edited, baseRevisionId: rev1, publish: false } })).json();
+
+    expect((await (await t.call(`/api/suggestions/${s.id}`, { token: t.ownerToken })).json()).conflicts).toEqual([0]);
+    const refused = await t.call(`/api/suggestions/${s.id}/accept`, { method: "POST", token: t.ownerToken, json: {} });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).conflicts).toEqual([0]);
+
+    reply = { replacement: edited.replace("Run the installer twice.", "Run the new installer twice.").replace("Revert the tag.", "Revert the tag and redeploy."), summary: "Use the new installer" };
+    const redo = await t.call(`/api/suggestions/${s.id}/redo`, { method: "POST", token: t.ownerToken });
+    expect(redo.status).toBe(201);
+    const fresh = await redo.json();
+    expect(fresh.suggestion.baseRevisionId).toBe(saved.revisionId);
+    expect(fresh.stale).toBe(false);
+    expect(lastRequest!.prompt).toContain("Run the installer twice.");
+    expect(lastRequest!.prompt).toContain("+Run the new installer.");
+    const open = (await (await t.call(`/api/pages/${pageId}/suggestions`, { token: t.ownerToken })).json()) as { id: string }[];
+    expect(open.map((x) => x.id)).toEqual([fresh.id]);
+  });
+
+  it("applies the changes that don't collide when the reviewer unticks the ones that do", async () => {
+    const lines = SOURCE.split("\n");
+    lines[5] = "Run the new installer.";
+    lines[13] = "Revert the tag and redeploy.";
+    const s = await suggestWhole(lines.join("\n"));
+    await t.call(`/api/pages/${pageId}`, { method: "PUT", token: t.ownerToken, json: { source: SOURCE.replace("Run the installer.", "Run the installer twice."), baseRevisionId: rev1, publish: false } });
+    const res = await t.call(`/api/suggestions/${s.id}/accept`, { method: "POST", token: t.ownerToken, json: { hunks: [1] } });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toContain("Run the installer twice.");
+    expect(body.source).toContain("Revert the tag and redeploy.");
+  });
+
   it("rejects and lists", async () => {
     const s = await suggestWhole(SOURCE.replace("Revert", "Roll back"));
     expect(await (await t.call(`/api/pages/${pageId}/suggestions`, { token: t.ownerToken })).json()).toHaveLength(1);

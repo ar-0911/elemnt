@@ -29,7 +29,8 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
   const [detail, setDetail] = useState<SuggestionDetail>();
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<false | "deciding" | "redoing">(false);
+  const [reload, setReload] = useState(0);
   const reviewing = Boolean(detail && detail.suggestion.status === "open");
   useEffect(() => onReviewing(reviewing), [reviewing, onReviewing]);
   useEffect(() => () => onReviewing(false), [onReviewing]);
@@ -53,14 +54,15 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
       .get<SuggestionDetail>(`/api/suggestions/${open}`)
       .then((d) => {
         setDetail(d);
-        setPicked(new Set(d.hunks.map((h) => h.index)));
+        // Changes that collide with newer edits can't be applied, so they start unticked.
+        setPicked(new Set(d.hunks.map((h) => h.index).filter((i) => !d.conflicts.includes(i))));
       })
       .catch((e: ApiError) => (setDetail(undefined), setError(e.message)));
-  }, [open, refreshKey]);
+  }, [open, refreshKey, reload]);
 
   async function decide(accept: boolean) {
     if (!detail) return;
-    setBusy(true);
+    setBusy("deciding");
     setError(undefined);
     try {
       if (accept) {
@@ -72,6 +74,26 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
         await api.post(`/api/suggestions/${detail.suggestion.id}/reject`);
       }
       setOpen(undefined);
+      refresh();
+    } catch (e) {
+      const err = e as ApiError;
+      // The page moved on under some of the picked changes: reload so the review marks them.
+      if (err.status === 409 && Array.isArray(err.details.conflicts)) setReload((r) => r + 1);
+      else setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Claude makes the same change to the latest version, as a new suggestion that replaces this one. */
+  async function redo() {
+    if (!detail) return;
+    setBusy("redoing");
+    setError(undefined);
+    try {
+      await beforeApply();
+      const fresh = await api.post<{ id: string }>(`/api/suggestions/${detail.suggestion.id}/redo`);
+      setOpen(fresh.id);
       refresh();
     } catch (e) {
       setError((e as ApiError).message);
@@ -108,7 +130,7 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
           </li>
         ))}
       </ul>
-      {error && <p className="error">{error}</p>}
+      {error && !reviewing && <p className="error">{error}</p>}
       {detail && reviewing && (
         <div className="review">
           <ReviewSummary detail={detail} />
@@ -127,8 +149,10 @@ export function SuggestionsPanel({ pageId, canEdit, focus, refreshKey, beforeApp
             canEdit={canEdit}
             picked={picked}
             busy={busy}
+            error={error}
             onToggle={toggle}
             onDecide={(accept) => void decide(accept)}
+            onRedo={() => void redo()}
             onClose={close}
           />,
           reviewSlot,

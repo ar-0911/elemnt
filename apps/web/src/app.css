@@ -388,3 +388,10 @@ a.tile:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
 .rdiff.current { outline: 2px solid var(--accent); outline-offset: 2px; }
 .rdiff ins.rdiff-word { text-decoration: none; background: color-mix(in srgb, #16a34a 30%, transparent); border-radius: 3px; padding: 0 1px; }
 .rdiff del.rdiff-word { background: color-mix(in srgb, #dc2626 28%, transparent); border-radius: 3px; padding: 0 1px; }
+.sreview .banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.sreview .banner p { margin: 0; flex: 1; min-width: 240px; }
+.sreview .info-banner { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--fg); border-bottom: 1px solid var(--line); }
+.sreview .clash-banner { background: color-mix(in srgb, #d97706 14%, var(--surface)); color: var(--fg); border-bottom: 1px solid color-mix(in srgb, #d97706 40%, var(--line)); }
+.sreview .error-banner { background: color-mix(in srgb, var(--danger, #dc2626) 10%, var(--surface)); color: var(--fg); border-bottom: 1px solid var(--line); }
+.ldiff-hunk.clash { border-color: color-mix(in srgb, #d97706 55%, var(--line)); }
+.clash-tag { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, #d97706 18%, transparent); color: #b45309; font-size: 11px; }

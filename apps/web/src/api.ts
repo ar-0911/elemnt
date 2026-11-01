@@ -148,6 +148,8 @@ export interface SuggestionSummary {
 export interface SuggestionDetail {
   suggestion: SuggestionSummary & { baseRevisionId: string };
   stale: boolean;
+  /** Hunks that touch lines edited since the suggestion was written; they can't be applied as they are. */
+  conflicts: number[];
   /** The page source the suggestion was written against, and the suggested source. */
   base: string;
   proposed: string;

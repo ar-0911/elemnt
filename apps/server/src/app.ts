@@ -1,3 +1,4 @@
+import { createTwoFilesPatch } from "diff";
 import { createElemnt, type Elemnt } from "@elemnt/core";
 import { randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
@@ -17,7 +18,7 @@ import * as linkedin from "./services/linkedin.js";
 import * as pagesSvc from "./services/pages.js";
 import * as commentsSvc from "./services/comments.js";
 import { searchPages } from "./services/search.js";
-import { anthropicProvider, assistPrompt, EDIT_SCHEMA, editorSystemPrompt, type AiProvider } from "./services/ai.js";
+import { anthropicProvider, assistPrompt, EDIT_SCHEMA, editorSystemPrompt, redoPrompt, type AiProvider } from "./services/ai.js";
 import * as oauth from "./services/oauth.js";
 import * as suggestionsSvc from "./services/suggestions.js";
 import { handleMcp } from "./mcp.js";
@@ -1199,6 +1200,27 @@ export function createApp(deps: AppDeps) {
     const { viewer, suggestion } = await suggestionWithAccess(c, "editor");
     await suggestionsSvc.rejectSuggestion(deps, { id: suggestion.id, userId: viewer.userId });
     return c.body(null, 204);
+  });
+
+  /**
+   * One click for a suggestion that collides with newer edits: Claude makes the
+   * same change to the current page, as a new suggestion that replaces this one.
+   */
+  app.post("/api/suggestions/:sid/redo", async (c) => {
+    const { viewer, page, suggestion } = await suggestionWithAccess(c, "editor");
+    if (suggestion.status !== "open") throw new HttpError(409, `This suggestion was already ${suggestion.status}.`);
+    const head = pagesSvc.headRevisionId(page)!;
+    const { base, proposed } = await suggestionsSvc.getSuggestion(pageDeps, suggestion.id);
+    const source = await pagesSvc.readRevision(deps, head, "source");
+    const ai = await aiClient(c);
+    const out = await ai.json<{ replacement: string; summary: string }>({
+      system: editorSystemPrompt(elemnt.authoringGuide()),
+      prompt: redoPrompt({ source, summary: suggestion.summary, intendedDiff: createTwoFilesPatch("before.md", "after.md", base, proposed, "", "", { context: 3 }) }),
+      schema: EDIT_SCHEMA,
+    });
+    const created = await suggestionsSvc.createSuggestion(pageDeps, { pageId: page.id, baseRevisionId: head, proposed: out.replacement, origin: suggestion.origin, authorId: viewer.userId, summary: out.summary || suggestion.summary });
+    await suggestionsSvc.rejectSuggestion(deps, { id: suggestion.id, userId: viewer.userId });
+    return c.json({ ...created, ...(await suggestionsSvc.getSuggestion(pageDeps, created.id)) }, 201);
   });
 
   // ---------- MCP and its OAuth ----------
