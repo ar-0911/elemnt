@@ -100,7 +100,14 @@ mountDeck(deck);`
 const cfg = JSON.parse(document.getElementById("elemnt-config").textContent);
 // Widgets run and stay loaded so the printed PDF shows them as they look, with a link to the live page.
 enhance(document.body, { sandboxOrigin: cfg.sandboxUrl ?? undefined, widgets: { autorun: Boolean(cfg.autorun), keepLoaded: true, liveUrl: cfg.liveUrl } });
-document.fonts.ready.then(() => fitSlides(document.body));
+document.fonts.ready.then(() => {
+  fitSlides(document.body);
+  // A running widget sizes itself to its content; fit its slide again once it has settled.
+  let t;
+  const refit = () => (clearTimeout(t), (t = setTimeout(() => fitSlides(document.body), 400)));
+  const ro = new ResizeObserver(refit);
+  for (const w of document.querySelectorAll("elemnt-widget")) ro.observe(w);
+});
 document.getElementById("print")?.addEventListener("click", () => print());`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
