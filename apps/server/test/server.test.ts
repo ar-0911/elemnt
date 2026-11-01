@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PUBLIC_URL, setup } from "./helpers.js";
+import { eq } from "drizzle-orm";
+import { pages } from "../src/db/schema.js";
 
 const PAGE = `---
 title: Deploying billing
@@ -120,6 +122,46 @@ describe("reader", () => {
     expect(res.headers.get("content-security-policy")).toContain("https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/");
     expect(res.headers.get("content-security-policy")).not.toMatch(/https:\/\/cdn\.jsdelivr\.net[ ;]/);
     expect(res.headers.get("strict-transport-security")).toContain("max-age=");
+  });
+
+  it("links a shared page to the rest of its space", async () => {
+    await createPage("pub", "spelunk", "---\ntitle: Spelunk\nsummary: Read any codebase.\nstyle:\n  preset: sunset\n---\n\nHello there reader.");
+    await createPage("pub", "draft-only", "---\ntitle: Draft only\n---\n\nx");
+    await t.db.update(pages).set({ publishedRevisionId: null }).where(eq(pages.path, "draft-only"));
+
+    const html = await (await t.call("/s/pub/billing")).text();
+    // Header menu lists every published page, marks this one, and links the space.
+    expect(html).toContain('<details class="eb-menu"><summary>2 pages</summary>');
+    expect(html).toContain('href="/s/pub/billing" aria-current="page">Deploying billing');
+    // "Keep reading" suggests the other page, in that page's own colours, and never an unpublished one.
+    const more = html.slice(html.indexOf('class="eb-more"'));
+    expect(more).toContain('href="/s/pub/spelunk"');
+    expect(more).toContain("Read any codebase.");
+    expect(more).toContain("--cad:#ff7a5c");
+    expect(more).not.toContain("/s/pub/billing\"");
+    expect(html).not.toContain("draft-only");
+    // Not in the Markdown view, which is what agents copy.
+    expect(await (await t.call("/s/pub/billing?view=markdown")).text()).not.toContain('class="eb-more"');
+  });
+
+  it("gives a space a landing page with a card per published page", async () => {
+    await createPage("pub", "spelunk", "---\ntitle: Spelunk\nsummary: Read any codebase.\n---\n\nHello.");
+    const html = await (await t.call("/s/pub")).text();
+    expect(html).toContain('<p class="elemnt-eyebrow">Public space</p><h1>PUB</h1>');
+    expect(html).toContain('<a href="/s/pub/billing">Start with Deploying billing</a>');
+    expect(html).toContain('class="eb-card" href="/s/pub/billing"');
+    expect(html).toContain('class="eb-card" href="/s/pub/spelunk"');
+    expect(html).toContain("<li><b>2</b> pages</li>");
+    expect(html).toContain('<meta property="og:title" content="PUB">');
+    // Workspace spaces stay private to members.
+    expect((await t.call("/s/eng")).status).toBe(404);
+  });
+
+  it("lists readable spaces on the front page", async () => {
+    const html = await (await t.call("/")).text();
+    expect(html).toContain('href="/s/pub"');
+    expect(html).not.toContain('href="/s/eng"');
+    expect(html).toContain('href="/login"');
   });
 
   it("shows the stored Markdown in the Markdown view", async () => {

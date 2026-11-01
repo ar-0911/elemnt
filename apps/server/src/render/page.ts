@@ -1,4 +1,5 @@
 import { contentCss, MERMAID_BASE, themeTokensCss } from "@elemnt/core";
+import { browseCss } from "./browse-css.js";
 /**
  * The reader shell around a stored rendition. Server-rendered and readable
  * with JavaScript off; @elemnt/elements (served at /assets/elements.js) then
@@ -60,6 +61,8 @@ export interface ShellInput {
   look?: Look;
   /** Explainer pages: the repo and commit the page was written against. */
   repo?: { repo: string; pinnedCommit: string; checkedCommit: string | null; behindBy: number };
+  /** Links to the space's other pages: the header menu and the "Keep reading" cards (render/browse.ts). */
+  browse?: { menu: string; more: string };
 }
 
 function levelNav(p: ShellInput): string {
@@ -104,7 +107,7 @@ export function contentSecurityPolicy(nonce: string, sandboxUrl?: string): strin
   ].join("; ");
 }
 
-const CSS = `
+export const pageCss = `
 ${themeTokensCss}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 var(--font-body,system-ui,-apple-system,"Segoe UI",sans-serif);-webkit-font-smoothing:antialiased}
 header.bar{position:sticky;top:0;z-index:4;display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:10px max(16px,4vw);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 78%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(12px);backdrop-filter:saturate(1.4) blur(12px)}
@@ -133,6 +136,7 @@ main{max-width:var(--page-width,760px);margin:0 auto;padding:clamp(32px,5vw,56px
 dialog{border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);max-width:520px;width:calc(100% - 32px)}
 dialog textarea{width:100%;min-height:120px;font:inherit}
 ${contentCss}
+${browseCss}
 `;
 
 const SCRIPT = `
@@ -166,6 +170,10 @@ document.getElementById("li-draft")?.addEventListener("click", async (e) => {
   else document.getElementById("li-status").textContent = data.error || "Couldn't draft a post.";
   btn.disabled = false; btn.textContent = "Draft with Claude";
 });
+for (const menu of document.querySelectorAll("details.eb-menu")) {
+  document.addEventListener("click", (e) => { if (!menu.contains(e.target)) menu.open = false; });
+  menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { menu.open = false; menu.querySelector("summary")?.focus(); } });
+}
 const copy = document.getElementById("copy-md");
 copy?.addEventListener("click", async () => {
   const text = document.getElementById("md-body")?.textContent ?? "";
@@ -214,11 +222,11 @@ ${d ? `<meta name="description" content="${d}">` : ""}
 ${d ? `<meta property="og:description" content="${d}">` : ""}
 <meta property="og:url" content="${escapeHtml(pageHref)}"><meta property="og:site_name" content="${escapeHtml(p.space.name)}">
 <meta name="twitter:card" content="summary">
-<style>${CSS}</style>
+<style>${pageCss}</style>
 ${lookHead(p.nonce, p.look)}
 </head><body${bodyClass(p.look)}>
 <header class="bar">
-  <span class="crumb"><a href="/s/${escapeHtml(p.space.slug)}">${escapeHtml(p.space.name)}</a> / ${t}</span>
+  <span class="crumb"><a href="/s/${escapeHtml(p.space.slug)}">${escapeHtml(p.space.name)}</a> / ${t}${p.browse?.menu ?? ""}</span>
   <span class="actions">
     ${levelNav(p)}
     <a class="btn" href="${escapeHtml(pageHref)}?view=present${p.level ? `&amp;level=${escapeHtml(p.level)}` : ""}">Present</a>
@@ -228,7 +236,7 @@ ${lookHead(p.nonce, p.look)}
     ${share}
   </span>
 </header>
-<div class="frame"><main>${p.repo ? repoBanner(p.repo) : ""}${content}</main></div>
+<div class="frame"><main>${p.repo ? repoBanner(p.repo) : ""}${content}${p.view === "page" ? (p.browse?.more ?? "") : ""}</main></div>
 ${dialog}
 <script type="application/json" id="elemnt-config">${jsonForScript({ sandboxUrl: p.sandboxUrl ?? null, autorun: Boolean(p.autorun), pageId: p.pageId ?? null, ask: Boolean(p.ask && p.view === "page"), mode: p.look?.mode ?? "auto" })}</script>
 <script type="module" nonce="${p.nonce}">${SCRIPT}</script>
@@ -241,5 +249,5 @@ export function jsonForScript(value: unknown): string {
 }
 
 export function renderSimple(nonce: string, title: string, bodyHtml: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>${CSS}</style></head><body><main>${bodyHtml}</main><script type="module" nonce="${nonce}"></script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>${pageCss}</style></head><body><main>${bodyHtml}</main><script type="module" nonce="${nonce}"></script></body></html>`;
 }
