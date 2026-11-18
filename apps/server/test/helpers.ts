@@ -16,6 +16,8 @@ import type { AiProvider } from "../src/services/ai.js";
 export const PUBLIC_URL = "https://docs.example.com";
 export const SANDBOX_URL = "https://sandbox.example.com";
 
+export const SITES_DOMAIN = "sites.example.net";
+
 export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean; ai?: AiProvider; selfVerify?: boolean; github?: Config["github"] } = {}) {
   const client = new PGlite();
   const db = drizzle(client, { schema }) as unknown as Db;
@@ -25,6 +27,7 @@ export async function setup(options: { fetch?: typeof fetch; linkedin?: boolean;
   const config: Config = {
     publicUrl: PUBLIC_URL,
     sandboxUrl: SANDBOX_URL,
+    sitesDomain: SITES_DOMAIN,
     widgetSelfVerify: options.selfVerify ?? true,
     ...(options.github ? { github: options.github } : {}),
     workspaceSlug: "acme",

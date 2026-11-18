@@ -19,11 +19,13 @@ interface SandboxDeps {
   blobs: BlobStore;
   /** Allowed to frame sandbox pages. */
   publicUrl: string;
+  /** Project websites, which embed widgets too (`https://*.sites.example`). */
+  frameAncestors?: () => Promise<string[]>;
 }
 
 const hostSource = (host: string) => `https://${host}`;
 
-export function widgetCsp(nonce: string, publicUrl: string, hosts: string[]): string {
+export function widgetCsp(nonce: string, publicUrl: string, hosts: string[], ancestors: string[] = []): string {
   const remote = hosts.map(hostSource).join(" ");
   return [
     "default-src 'none'",
@@ -40,11 +42,11 @@ export function widgetCsp(nonce: string, publicUrl: string, hosts: string[]): st
     "object-src 'none'",
     "form-action 'none'",
     "base-uri 'none'",
-    `frame-ancestors ${new URL(publicUrl).origin}`,
+    `frame-ancestors ${[new URL(publicUrl).origin, ...ancestors].join(" ")}`,
   ].join("; ");
 }
 
-export function runnerCsp(nonce: string, publicUrl: string, runtime: "javascript" | "python"): string {
+export function runnerCsp(nonce: string, publicUrl: string, runtime: "javascript" | "python", ancestors: string[] = []): string {
   const cdn = "https://cdn.jsdelivr.net";
   return [
     "default-src 'none'",
@@ -54,7 +56,7 @@ export function runnerCsp(nonce: string, publicUrl: string, runtime: "javascript
     "worker-src 'none'",
     "form-action 'none'",
     "base-uri 'none'",
-    `frame-ancestors ${new URL(publicUrl).origin}`,
+    `frame-ancestors ${[new URL(publicUrl).origin, ...ancestors].join(" ")}`,
   ].join("; ");
 }
 
@@ -174,11 +176,17 @@ function secure(c: Context, csp: string) {
 
 export function sandboxApp(deps: SandboxDeps) {
   const app = new Hono();
+  let ancestors: { at: number; list: Promise<string[]> } | undefined;
+  const siteAncestors = () => {
+    if (!deps.frameAncestors) return Promise.resolve([]);
+    if (!ancestors || Date.now() - ancestors.at > 30_000) ancestors = { at: Date.now(), list: deps.frameAncestors().catch(() => []) };
+    return ancestors.list;
+  };
 
-  app.get("/w/run/:runtime{javascript|python}", (c) => {
+  app.get("/w/run/:runtime{javascript|python}", async (c) => {
     const runtime = c.req.param("runtime") as "javascript" | "python";
     const nonce = randomBytes(16).toString("base64");
-    secure(c, runnerCsp(nonce, deps.publicUrl, runtime));
+    secure(c, runnerCsp(nonce, deps.publicUrl, runtime, await siteAncestors()));
     c.header("Cache-Control", "public, max-age=3600");
     return c.html(`<!doctype html><meta charset="utf-8"><title>Run</title><script type="module" nonce="${nonce}">${RUNNER[runtime]}</script>`);
   });
@@ -190,7 +198,7 @@ export function sandboxApp(deps: SandboxDeps) {
     if (w.findings.some((f) => f.severity === "error")) return c.text("This widget failed the safety scan.", 410);
     const nonce = randomBytes(16).toString("base64");
     const theme = c.req.query("theme") === "dark" ? "dark" : "light";
-    secure(c, widgetCsp(nonce, deps.publicUrl, w.hosts));
+    secure(c, widgetCsp(nonce, deps.publicUrl, w.hosts, await siteAncestors()));
     // Code is content-addressed, but blocks must apply at once: no long caching.
     c.header("Cache-Control", "no-cache");
     return c.html(`<!doctype html>

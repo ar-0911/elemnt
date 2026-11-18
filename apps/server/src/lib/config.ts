@@ -26,6 +26,14 @@ const schema = z.object({
    * https://acme.elemntusercontent.com pointing at this same server.
    */
   ELEMNT_SANDBOX_URL: z.string().url().optional(),
+  /**
+   * Project websites answer at <site>.<this domain>, e.g. "adityapoc.xyz" gives
+   * elemnt.adityapoc.xyz. Point a wildcard DNS record (*.<domain>) at this
+   * server. Sites run their own JavaScript on their own origins; the app's
+   * cookies are host-only, so they never reach a site. Defaults to "localhost" in
+   * local development, so http://<site>.localhost:8787 works.
+   */
+  ELEMNT_SITES_DOMAIN: z.string().regex(/^[a-z0-9.-]+$/i).optional(),
   /** Lets workspace admins mark their own workspace verified (self-hosting). SaaS operators set false. */
   ELEMNT_WIDGET_SELF_VERIFY: z.enum(["true", "false"]).default("true"),
   /** Page styles load their fonts from Google Fonts; "off" keeps every font local (system font stacks). */
@@ -63,6 +71,8 @@ export interface Config {
   secretKey: string;
   /** Origin for sandboxed frames; see ELEMNT_SANDBOX_URL. */
   sandboxUrl?: string;
+  /** Project websites live at <slug>.<sitesDomain>; see ELEMNT_SITES_DOMAIN. */
+  sitesDomain?: string;
   widgetSelfVerify?: boolean;
   /** Load page-style fonts from Google Fonts. Default true. */
   fonts?: boolean;
@@ -92,9 +102,12 @@ export function configFromEnv(env: Env): Config {
   const sandboxUrl = env.ELEMNT_SANDBOX_URL?.replace(/\/$/, "") ?? defaultSandboxUrl(publicUrl);
   if (!sandboxUrl) console.warn("ELEMNT_SANDBOX_URL is not set: widgets and runnable code are off. Point a second hostname at this server and set it.");
   else if (new URL(sandboxUrl).origin === new URL(publicUrl).origin) throw new Error("ELEMNT_SANDBOX_URL must be a different origin from ELEMNT_PUBLIC_URL.");
+  const appHost = new URL(publicUrl).hostname;
+  const sitesDomain = env.ELEMNT_SITES_DOMAIN?.toLowerCase().replace(/^\*?\./, "") ?? (appHost === "localhost" || appHost === "127.0.0.1" ? "localhost" : undefined);
   return {
     publicUrl,
     ...(sandboxUrl ? { sandboxUrl } : {}),
+    ...(sitesDomain ? { sitesDomain } : {}),
     widgetSelfVerify: env.ELEMNT_WIDGET_SELF_VERIFY === "true",
     fonts: env.ELEMNT_FONTS === "google",
     workspaceSlug: env.ELEMNT_WORKSPACE,
