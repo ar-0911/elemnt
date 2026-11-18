@@ -84,6 +84,8 @@ export interface SiteSnapshot {
   url: string;
   tree: Tree;
   docs: DocPage[];
+  /** Slug of the linked space, to point its reader links (/s/<space>/…) at the site's own docs. */
+  spaceSlug?: string;
   /** Published sites in the workspace, for hub pages. */
   sites: SiteRef[];
   sandboxUrl?: string;
@@ -449,8 +451,25 @@ export async function siteRenderer(deps: RenderDeps, input: SiteSnapshot) {
   }
 
   /** Markdown (already compiled) with its designed sections filled in. */
+  /**
+   * Pages link to each other with reader URLs (/s/<space>/<path>). On a site,
+   * those go to the site's own doc routes when the page is part of the site,
+   * and to the app otherwise, so no link lands on a missing route.
+   */
+  function siteLinks(html: string) {
+    if (!snapshot.spaceSlug) return html;
+    const base = `/s/${snapshot.spaceSlug}/`;
+    return html.replace(/href="(\/s\/[^"#?]+)([^"]*)"/g, (whole, path: string, rest: string) => {
+      if (!path.startsWith(base)) return `href="${escapeHtml(snapshot.appUrl)}${path}${rest}"`;
+      const full = path.slice(base.length).replace(/\/$/, "");
+      const scoped = scopeDocs(config, [{ path: full } as DocPage])[0]?.path;
+      if (scoped && snapshot.docs.some((d) => d.path === scoped)) return `href="${docRoute(config, scoped)}${rest}"`;
+      return `href="${escapeHtml(snapshot.appUrl)}${path}${rest}"`;
+    });
+  }
+
   async function markdownHtml(html: string, ctx: object, diagnostics: Diagnostic[], route: string) {
-    const decorated = await deps.decorateWidgets(html);
+    const decorated = siteLinks(await deps.decorateWidgets(html));
     return replaceSections(decorated, (use, props, content) => renderSection(use, props, content, ctx, diagnostics, route));
   }
 

@@ -270,11 +270,12 @@ async function siteRefs(deps: SitesDeps, workspaceId: string): Promise<SiteRef[]
 
 /** What visitors (or a preview) see right now, keyed so renders can be cached. */
 export async function snapshot(deps: SitesDeps, site: Site, treeHash: string, options: { preview?: string } = {}): Promise<SiteSnapshot> {
-  const [tree, docs, refs, stamp] = await Promise.all([
+  const [tree, docs, refs, stamp, space] = await Promise.all([
     loadTree(deps.blobs, treeHash),
     docsFor(deps.db, site.spaceId),
     siteRefs(deps, site.workspaceId),
     deps.db.select({ at: max(sites.publishedAt), n: count() }).from(sites).where(eq(sites.workspaceId, site.workspaceId)),
+    site.spaceId ? deps.db.query.spaces.findFirst({ where: (sp, { eq: is }) => is(sp.id, site.spaceId!) }) : undefined,
   ]);
   const url = siteUrl(deps, site, options.preview) ?? `${deps.publicUrl}/sites/${site.slug}`;
   const docsKey = docs.map((d) => `${d.path}@${d.revisionId}:${d.position}:${d.title}`).join("|");
@@ -284,6 +285,7 @@ export async function snapshot(deps: SitesDeps, site: Site, treeHash: string, op
     url,
     tree,
     docs,
+    ...(space ? { spaceSlug: space.slug } : {}),
     sites: refs,
     ...(deps.sandboxUrl ? { sandboxUrl: deps.sandboxUrl } : {}),
     appUrl: deps.publicUrl,

@@ -19,9 +19,13 @@ import { contentCss, themeTokensCss } from "@elemnt/core";
  * from the site itself, so scenes need no CDN.
  */
 
+// Layered, so anything a site's own CSS sets (tokens included) wins without
+// needing more specific selectors.
 export const siteCss = `
+@layer elemnt{
 ${themeTokensCss}
 ${contentCss}
+}
 html{scroll-behavior:smooth}
 .elemnt-docs-index{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin-top:24px}
 .elemnt-docs-card{display:flex;flex-direction:column;gap:6px;padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--fg);text-decoration:none;transition:transform .2s,border-color .2s}
@@ -60,7 +64,7 @@ for (const b of document.querySelectorAll("[data-elemnt-theme-toggle]")) mountTh
 const here = location.pathname.replace(/\\/$/, "") || "/";
 for (const a of document.querySelectorAll("nav a[href], [data-elemnt-nav] a[href]")) {
   const href = new URL(a.href, location.href);
-  if (href.origin !== location.origin) continue;
+  if (href.origin !== location.origin || href.hash) continue;
   const p = href.pathname.replace(/\\/$/, "") || "/";
   if (p === here || (p !== "/" && here.startsWith(p + "/"))) a.setAttribute("aria-current", p === here ? "page" : "true");
 }
