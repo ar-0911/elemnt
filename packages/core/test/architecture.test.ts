@@ -50,6 +50,17 @@ describe("architecture", () => {
     expect(html).not.toContain("user-content");
   });
 
+  it("lays out an unlabelled group without drawing a box", () => {
+    const src = 'server a "A"\ngroup g down {\n  zone z "Inner" vpc {\n    server b "B"\n  }\n  server c "C"\n}\na -> b\na -> c';
+    const { spec, problems } = parseArch(src);
+    expect(problems).toEqual([]);
+    const { html, markdown } = elemnt.compile(page(src));
+    expect(html.match(/class="ea-zone /g)?.length).toBe(1);
+    expect(markdown).toContain("- Inner (vpc)");
+    expect(markdown).not.toContain("(group)");
+    expect(spec.items.map((i) => i.id)).toEqual(["a", "g"]);
+  });
+
   it("gives agents a plain outline instead of a picture", () => {
     const { markdown } = elemnt.compile(page(SRC));
     expect(markdown).toContain("**Architecture: Hub**");

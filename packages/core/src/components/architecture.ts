@@ -85,7 +85,7 @@ export function parseArch(src: string): { spec: ArchSpec; problems: string[] } {
       const zdir = rest.find((w): w is Dir => w === "right" || w === "down");
       const unknown = rest.filter((w) => w !== kind && w !== zdir);
       if (unknown.length) problems.push(`line ${line}: unknown zone word "${unknown[0]}"; zone kinds are ${ARCH_ZONE_KINDS.join(", ")}`);
-      const z: ArchZone = { type: "zone", id, kind, label: strings[0] ?? id, dir: zdir, items: [], line };
+      const z: ArchZone = { type: "zone", id, kind, label: strings[0] ?? (words[0] === "group" ? "" : id), dir: zdir, items: [], line };
       if (ids.has(id)) problems.push(`line ${line}: "${id}" is defined twice`);
       ids.set(id, z);
       cur.items.push(z);
@@ -346,12 +346,52 @@ function score(pts: Pt[], a: Box, b: Box, obs: Obstacles): number {
   return n + pathLength(pts) + (pts.length - 2) * 28;
 }
 
+/**
+ * Detours with four bends that run through a gap between cards: out of the
+ * source, along a channel just above or below (or beside) some card, and in.
+ */
+function channelRoutes(p0: Pt, s0: Side, p1: Pt, s1: Side, obs: Obstacles): Pt[][] {
+  const out: Pt[][] = [];
+  if (isH(s0) !== isH(s1)) return out;
+  const [dx0, dy0] = dirOf(s0), [dx1, dy1] = dirOf(s1);
+  const M = 16;
+  if (isH(s0)) {
+    if (dx0 !== -dx1 || (p1[0] - p0[0]) * dx0 < 4 * M) return out;
+    const lo = Math.min(p0[1], p1[1]) - 160, hi = Math.max(p0[1], p1[1]) + 160;
+    const chans = new Set<number>();
+    for (const b of obs.nodes) for (const c of [b.y - 14, b.y + b.h + 14]) if (c > lo && c < hi) chans.add(Math.round(c));
+    for (const c of chans) for (const k of [0, 1, 2]) {
+      const x1 = p0[0] + dx0 * (M + k * 10), x2 = p1[0] - dx0 * (M + k * 10);
+      out.push([p0, [x1, p0[1]], [x1, c], [x2, c], [x2, p1[1]], p1]);
+    }
+    return out;
+  }
+  if (dy0 !== -dy1 || (p1[1] - p0[1]) * dy0 < 4 * M) return out;
+  const lo = Math.min(p0[0], p1[0]) - 160, hi = Math.max(p0[0], p1[0]) + 160;
+  const chans = new Set<number>();
+  for (const b of obs.nodes) for (const c of [b.x - 14, b.x + b.w + 14]) if (c > lo && c < hi) chans.add(Math.round(c));
+  for (const c of chans) for (const k of [0, 1, 2]) {
+    const y1 = p0[1] + dy0 * (M + k * 10), y2 = p1[1] - dy0 * (M + k * 10);
+    out.push([p0, [p0[0], y1], [c, y1], [c, y2], [p1[0], y2], p1]);
+  }
+  return out;
+}
+
 function bestRoute(a: Box, b: Box, obs: Obstacles, pairs: [Side, Side][], off: [number, number]): { pts: Pt[]; sides: [Side, Side]; cost: number } | undefined {
   let best: { pts: Pt[]; sides: [Side, Side]; cost: number } | undefined;
+  const consider = (pts: Pt[], s0: Side, s1: Side) => {
+    const cost = score(pts, a, b, obs);
+    if (!best || cost < best.cost) best = { pts, sides: [s0, s1], cost };
+  };
   for (const [s0, s1] of pairs) {
-    for (const pts of candidates(port(a, s0, off[0]), s0, port(b, s1, off[1]), s1)) {
-      const cost = score(pts, a, b, obs);
-      if (!best || cost < best.cost) best = { pts, sides: [s0, s1], cost };
+    const p0 = port(a, s0, off[0]), p1 = port(b, s1, off[1]);
+    for (const pts of candidates(p0, s0, p1, s1)) consider(pts, s0, s1);
+  }
+  // Only detour when every simple route crosses a card.
+  if (!best || best.cost >= 1000) {
+    for (const [s0, s1] of pairs) {
+      const p0 = port(a, s0, off[0]), p1 = port(b, s1, off[1]);
+      for (const pts of channelRoutes(p0, s0, p1, s1, obs)) consider(pts, s0, s1);
     }
   }
   return best;
@@ -360,7 +400,7 @@ function bestRoute(a: Box, b: Box, obs: Obstacles, pairs: [Side, Side][], off: [
 const pathD = (pts: Pt[]) => pts.map((p, i) => `${i ? "L" : "M"}${num(p[0])} ${num(p[1])}`).join("");
 
 /** Where a label reads best: on a long stretch, clear of cards, zone tabs and other labels. */
-function labelSpot(pts: Pt[], tw: number, obs: Obstacles, placed: Box[]): Pt {
+function labelSpot(pts: Pt[], tw: number, obs: Obstacles, placed: Box[], own: [Pt, Pt][] = []): Pt {
   let best = Infinity, at: Pt = pts[0]!;
   for (let i = 1; i < pts.length; i++) {
     const [x0, y0] = pts[i - 1]!, [x1, y1] = pts[i]!;
@@ -371,6 +411,8 @@ function labelSpot(pts: Pt[], tw: number, obs: Obstacles, placed: Box[]): Pt {
       const hit = (bx: Box) => r.x < bx.x + bx.w && r.x + r.w > bx.x && r.y < bx.y + bx.h && r.y + r.h > bx.y;
       let cost = -len + Math.abs(f - 0.5) * 40;
       cost += obs.nodes.filter(hit).length * 2000 + obs.tabs.filter(hit).length * 300 + placed.filter(hit).length * 1500;
+      // Sitting on another link's wire hides both.
+      for (const seg of obs.segs) if (!own.includes(seg) && segHitsBox(seg[0], seg[1], r, -2)) cost += 400;
       if (cost < best) { best = cost; at = c; }
     }
   }
@@ -394,7 +436,8 @@ function pathLength(pts: Pt[]): number {
 function drawZone(p: Placed, out: Element[]) {
   const z = p.item as ArchZone;
   const { x, y, w, h: hh } = p.box;
-  out.push(s("g", { className: ["ea-zone", `ea-z-${z.kind}`] }, [
+  // A zone with no label is an invisible layout group: it arranges its children but draws nothing.
+  if (z.label) out.push(s("g", { className: ["ea-zone", `ea-z-${z.kind}`] }, [
     s("rect", { x: num(x), y: num(y), width: num(w), height: num(hh), rx: 10 }),
     s("rect", { className: ["ea-zone-tab"], x: num(x), y: num(y), width: num(Math.min(w, z.label.length * 6.6 + 26)), height: 24, rx: 10 }),
     s("text", { x: num(x + 12), y: num(y + 16) }, z.label),
@@ -430,7 +473,7 @@ export function renderArch(spec: ArchSpec, title: string): Element {
   const obs: Obstacles = { nodes: [], tabs: [], segs: [] };
   const collect = (p: Placed) => {
     if (p.item.type === "zone") {
-      obs.tabs.push({ x: p.box.x, y: p.box.y, w: Math.min(p.box.w, p.item.label.length * 6.6 + 26), h: 24 });
+      if (p.item.label) obs.tabs.push({ x: p.box.x, y: p.box.y, w: Math.min(p.box.w, p.item.label.length * 6.6 + 26), h: 24 });
       p.children?.forEach(collect);
     } else obs.nodes.push(p.box);
   };
@@ -466,6 +509,7 @@ export function renderArch(spec: ArchSpec, title: string): Element {
   }
   // Pass 2: route for real, steering clear of links already drawn.
   const labelBoxes: Box[] = [];
+  const pending: { l: ArchLink; pts: Pt[]; own: [Pt, Pt][] }[] = [];
   plans.forEach((plan, i) => {
     if (!plan) return;
     const { l, a, b } = plan;
@@ -487,16 +531,18 @@ export function renderArch(spec: ArchSpec, title: string): Element {
         s("animateMotion", { path: d, dur: `${num(dur)}s`, begin: `-${num(((i * 0.37) % 1) * dur)}s`, repeatCount: "indefinite" }),
       ]),
     ]));
-    if (l.label) {
-      const tw = l.label.length * 6.2 + 14;
-      const at = labelSpot(pts, tw, obs, labelBoxes);
-      labelBoxes.push({ x: at[0] - tw / 2, y: at[1] - 10, w: tw, h: 20 });
-      labels.push(s("g", { className: ["ea-link-label", `ea-l-${l.style}`] }, [
-        s("rect", { x: num(at[0] - tw / 2), y: num(at[1] - 10), width: num(tw), height: 20, rx: 10 }),
-        s("text", { x: num(at[0]), y: num(at[1] + 4) }, l.label),
-      ]));
-    }
+    if (l.label) pending.push({ l, pts, own: obs.segs.slice(obs.segs.length - (pts.length - 1)) });
   });
+  // Labels go last, so they can steer clear of every wire.
+  for (const { l, pts, own } of pending) {
+    const tw = l.label!.length * 6.2 + 14;
+    const at = labelSpot(pts, tw, obs, labelBoxes, own);
+    labelBoxes.push({ x: at[0] - tw / 2, y: at[1] - 10, w: tw, h: 20 });
+    labels.push(s("g", { className: ["ea-link-label", `ea-l-${l.style}`] }, [
+      s("rect", { x: num(at[0] - tw / 2), y: num(at[1] - 10), width: num(tw), height: 20, rx: 10 }),
+      s("text", { x: num(at[0]), y: num(at[1] + 4) }, l.label!),
+    ]));
+  }
   return s("svg", { viewBox: `0 0 ${num(w)} ${num(hh)}`, width: num(w), height: num(hh), role: "img", ariaLabel: title, className: ["ea-svg"] }, [
     s("title", title),
     s("g", zones),
@@ -514,7 +560,8 @@ export function describeArch(spec: ArchSpec): string {
     for (const it of items) {
       names.set(it.id, it.label);
       const pad = "  ".repeat(depth);
-      if (it.type === "zone") {
+      if (it.type === "zone" && !it.label) walk(it.items, depth);
+      else if (it.type === "zone") {
         lines.push(`${pad}- ${it.label} (${it.kind})`);
         walk(it.items, depth + 1);
       } else lines.push(`${pad}- ${it.label}: ${it.kind}${it.sub ? `, ${it.sub}` : ""}`);
@@ -570,7 +617,7 @@ export const architecture: ElemntComponent<z.infer<typeof props>> = {
   authoring: {
     doc:
       "Infrastructure diagram: nested zones (region, vpc, subnet, public, private, onprem, cloud, account, cluster, office, group) holding services with icons, and labelled links with moving traffic. " +
-      "Inside an ```arch block: `zone <id> \"Label\" [kind] [right|down] {` … `}`; a service is `<kind> <id> \"Label\" [\"detail\"]`; a link is `a -> b \"label\"` (`<->` both ways, `-->` dashed, `=>` tunnel). " +
+      "Inside an ```arch block: `zone <id> \"Label\" [kind] [right|down] {` … `}`; a service is `<kind> <id> \"Label\" [\"detail\"]`; `group <id> [right|down] {` … `}` arranges items without drawing a box; a link is `a -> b \"label\"` (`<->` both ways, `-->` dashed, `=>` tunnel). " +
       `Service kinds: ${[...CATEGORY.keys()].join(", ")}. Use it instead of a flowchart whenever the picture is about infrastructure.`,
     snippet:
       ':::architecture{caption="Remote access through the VPN hub"}\n```arch\nlaptop dev "Engineer laptop"\nzone aws "AWS · eu-west-1" region {\n  zone vpc "Hub VPC · 10.40.0.0/16" vpc {\n    lb nlb "Network LB" "UDP 51820"\n    vpn hub "VPN hub"\n  }\n  db app "App database" "10.50.2.15"\n}\ndev => nlb "WireGuard"\nnlb -> hub\nhub -> app "5432"\n```\n:::',
