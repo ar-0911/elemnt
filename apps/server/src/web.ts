@@ -13,8 +13,13 @@ const TYPES: Record<string, string> = {
   ".map": "application/json",
 };
 
-/** The editor bundles its own scripts, Mermaid included, and compiles in a worker. */
-export function editorCsp(sandboxUrl?: string): string {
+/**
+ * The editor bundles its own scripts, Mermaid included, and compiles in a worker.
+ * It frames the widget sandbox and, in the Websites studio, site previews
+ * (`previewFrames`, e.g. `https://*.sites.example.com`).
+ */
+export function editorCsp(sandboxUrl?: string, previewFrames: string[] = []): string {
+  const frames = [...(sandboxUrl ? [new URL(sandboxUrl).origin] : []), ...previewFrames];
   return [
     "default-src 'self'",
     "script-src 'self'",
@@ -23,7 +28,7 @@ export function editorCsp(sandboxUrl?: string): string {
     "img-src 'self' data: https:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "connect-src 'self'",
-    `frame-src ${sandboxUrl ? new URL(sandboxUrl).origin : "'none'"}`,
+    `frame-src ${frames.length ? frames.join(" ") : "'none'"}`,
     "object-src 'none'",
     "base-uri 'none'",
     "frame-ancestors 'none'",
@@ -34,8 +39,8 @@ export function editorCsp(sandboxUrl?: string): string {
  * Serves the built editor (apps/web/dist) under /app. Hashed assets are cached
  * for a year; every other path falls back to index.html for client routing.
  */
-export function editorApp(dir: string, sandboxUrl?: string) {
-  const csp = editorCsp(sandboxUrl);
+export function editorApp(dir: string, sandboxUrl?: string, previewFrames: string[] = []) {
+  const csp = editorCsp(sandboxUrl, previewFrames);
   const root = normalize(dir) + sep;
   const web = new Hono();
   web.get("*", async (c) => {
