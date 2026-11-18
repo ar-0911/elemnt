@@ -78,6 +78,13 @@
       "when": 1795016095464,
       "tag": "0010_space_trash_and_redirects",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795019358315,
+      "tag": "0011_site_access",
+      "breakpoints": true
     }
   ]
 }

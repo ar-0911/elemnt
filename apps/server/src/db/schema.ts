@@ -469,6 +469,14 @@ export const sites = pgTable(
     hostname: text("hostname"),
     /** owner/name of the repo the site is about, if any. */
     repo: text("repo"),
+    /**
+     * "public": anyone on the internet. "members": only people who can read the
+     * linked space (owners and, for a private space, the people added to it),
+     * after signing in to Elemnt.
+     */
+    visibility: text("visibility", { enum: ["public", "members"] }).notNull().default("public"),
+    /** When on, Claude may publish this site's changes over MCP without a person pressing Publish. */
+    agentPublish: boolean("agent_publish").notNull().default(false),
     draftTree: text("draft_tree").notNull(),
     publishedTree: text("published_tree"),
     publishedAt: timestamp("published_at", { withTimezone: true }),

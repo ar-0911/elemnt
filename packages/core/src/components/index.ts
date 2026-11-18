@@ -2,6 +2,7 @@ import type { AnyComponent } from "../types.js";
 import { callout } from "./callout.js";
 import { details } from "./details.js";
 import { diagram } from "./diagram.js";
+import { architecture } from "./architecture.js";
 import { query } from "./query.js";
 import { runbook, step } from "./runbook.js";
 import { steps } from "./steps.js";
@@ -23,6 +24,8 @@ import { section } from "./section.js";
 export { badge, band, card, cards, event, graphic, hero, quote, stat, stats, timeline };
 export { filetree, repo, snippet };
 export { section };
+export { architecture };
+export { parseArch, renderArch, describeArch, ARCH_NODE_KINDS, ARCH_ZONE_KINDS, type ArchSpec } from "./architecture.js";
 export { annotate, calc, callout, chart, codegroup, compare, datagrid, details, diagram, explore, query, quiz, runbook, side, step, steps, tab, tabs, term, variable, widget };
 export { widgetCode, widgetHash, type WidgetCode } from "./widget.js";
 export { cleanSvg, SVG_ATTRIBUTES, SVG_TAGS } from "./graphic.js";
@@ -35,6 +38,7 @@ export const builtinComponents: readonly AnyComponent[] = [
   steps,
   details,
   diagram,
+  architecture,
   chart,
   datagrid,
   explore,

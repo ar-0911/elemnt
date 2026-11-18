@@ -49,6 +49,7 @@ import { authPage, loginPage, signupPage } from "./render/auth.js";
 import { roles } from "./db/schema.js";
 import * as sitesSvc from "./services/sites.js";
 import { siteHost } from "./sites/host.js";
+import { siteAccess } from "./sites/access.js";
 import { registerSiteRoutes } from "./sites/routes.js";
 import { generateSite } from "./services/site-generate.js";
 
@@ -131,6 +132,7 @@ export function createApp(deps: AppDeps) {
   // host is never a site, whatever the configured sites domain.
   const appHost = new URL(deps.config.publicUrl).host;
   const serveSite = siteHost({ ...sitesDeps, elementsBundle: () => loadBundle() });
+  const access = siteAccess({ ...sitesDeps, box, workspaceId: currentWorkspace });
   /** Read-only endpoints sites' components call (repo cards, live data), forwarded without credentials. */
   const SITE_PASSTHROUGH = /^\/api\/(github\/[^/]+\/[^/]+(\/(tree|file))?|query)$/;
   app.use(async (c, next) => {
@@ -146,13 +148,16 @@ export function createApp(deps: AppDeps) {
       if (domain && url.hostname.endsWith(`.${domain}`)) return c.html(`<!doctype html><meta charset="utf-8"><title>No site here</title><body style="font:16px system-ui;text-align:center;margin:80px auto;max-width:560px"><h1>There's no website here yet</h1><p>Nothing is published at ${escapeHtml(url.hostname)}.</p></body>`, 404);
       return next();
     }
+    // Members-only sites: sign in through the app first (sites/access.ts).
+    const refused = await access.gate(c.req.raw, match);
+    if (refused) return refused;
     if (c.req.method === "GET" && SITE_PASSTHROUGH.test(url.pathname)) {
       const res = await app.fetch(new Request(`${deps.config.publicUrl}${url.pathname}${url.search}`, { headers: { accept: c.req.header("accept") ?? "application/json" } }));
       const out = new Response(res.body, res);
       out.headers.set("Access-Control-Allow-Origin", "*");
       return out;
     }
-    return serveSite(c.req.raw, match);
+    return access.seal(await serveSite(c.req.raw, match), match);
   });
 
   app.onError((err, c) => {
@@ -274,6 +279,24 @@ export function createApp(deps: AppDeps) {
   };
   const signIn = (c: Context<Env>, token: string) =>
     setCookie(c, TOKEN_COOKIE, token, { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: 60 * 60 * 24 * accounts.SESSION_DAYS });
+
+  // A members-only website sends visitors here to sign in; we hand them back with a one-minute code.
+  app.get("/sites/enter", async (c) => {
+    const slug = c.req.query("site") ?? "";
+    const ret = c.req.query("return") ?? "/";
+    const preview = c.req.query("preview");
+    const viewer = c.get("viewer");
+    if (!viewer?.role) return c.redirect(`/login?next=${encodeURIComponent(`/sites/enter?${new URLSearchParams({ site: slug, return: ret, ...(preview ? { preview } : {}) })}`)}`);
+    const site = await sitesSvc.findSite(deps.db, c.get("workspaceId"), slug);
+    if (!site || site.visibility !== "members") throw new HttpError(404, "No members-only site with that name.");
+    if (!(await sitesSvc.canOpenSite(deps.db, viewer, site))) {
+      return c.html(`<!doctype html><meta charset="utf-8"><title>No access</title><body style="font:16px/1.6 system-ui;max-width:560px;margin:80px auto;text-align:center"><h1 style="font-size:1.5rem">You don't have access to ${escapeHtml(site.name)}</h1><p>It's private to the people in its Elemnt space. Ask an owner to add you.</p><p><a href="/app/">Back to Elemnt</a></p></body>`, 403);
+    }
+    const to = access.handoff(site, viewer.userId, ret, preview);
+    if (!to) throw new HttpError(404, "This site has no address yet.");
+    c.header("Cache-Control", "no-store");
+    return c.redirect(to);
+  });
 
   app.get("/login", async (c) => {
     if (!workspaceId) return c.redirect("/signup");
