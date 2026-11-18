@@ -64,6 +64,13 @@
       "when": 1795000569728,
       "tag": "0008_sites",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795005729835,
+      "tag": "0009_space_members",
+      "breakpoints": true
     }
   ]
 }

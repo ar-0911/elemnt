@@ -5,6 +5,7 @@ import { apiTokens, invites, members, users, workspaces, type Role } from "../db
 import { randomToken, sha256 } from "../lib/crypto.js";
 import { newId } from "../lib/ids.js";
 import { DUMMY_HASH, hashPassword, verifyPassword } from "../lib/password.js";
+import { removeFromWorkspace } from "./space-access.js";
 import { HttpError } from "./errors.js";
 
 /**
@@ -192,6 +193,7 @@ export async function removeMember(db: Db, workspaceId: string, actorRole: Role,
   if (m.role === "owner" && actorRole !== "owner") throw new HttpError(403, "Only an owner can remove an owner.");
   if (m.role === "owner" && (await ownerCount(db, workspaceId)) < 2) throw new HttpError(409, "The workspace needs at least one owner.");
   await db.delete(members).where(and(eq(members.workspaceId, workspaceId), eq(members.userId, userId)));
+  await removeFromWorkspace(db, workspaceId, userId);
   await db.delete(apiTokens).where(and(eq(apiTokens.userId, userId), eq(apiTokens.kind, "session")));
 }
 

@@ -46,7 +46,8 @@ open http://localhost:8787/s/docs/hello
 | `GET /s/:space/:path` | The page, with a Page / Markdown toggle (`?view=markdown`) |
 | `GET /s/:space/:path.md` | Stored Markdown for agents; also on `Accept: text/markdown` |
 | `GET /s/:space/llms.txt`, `llms-full.txt` | Agent index and all pages in one file |
-| `POST /api/spaces` | Create a space (admin) |
+| `POST /api/spaces` | Create a space (admin). `visibility` is `public` (anyone), `workspace` (any member) or `private` (owners plus people added to it) |
+| `GET/PUT/DELETE /api/spaces/:space/members[/:userId]` | Who can read a private space (owner). The space never shows up for anyone else: not in lists, search, Ask, MCP or websites |
 | `GET /api/spaces/:space/tree` | Page tree |
 | `POST /api/spaces/:space/pages` | Create a page `{path, source}`; 422 with diagnostics if the source has errors |
 | `GET /api/pages/:id`, `PUT /api/pages/:id` | Read source; save `{source, baseRevisionId, publish?}` (409 if someone saved first). `publish: false` saves a draft, which may contain errors |
