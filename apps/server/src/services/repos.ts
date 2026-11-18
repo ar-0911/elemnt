@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { pages, repoLinks, spaces, suggestions } from "../db/schema.js";
 import type { AiClient } from "./ai.js";
 import { EDIT_SCHEMA, editorSystemPrompt } from "./ai.js";
@@ -159,5 +159,5 @@ export async function pagesForRepo(deps: Pick<PageDeps, "db">, repo: string) {
     .from(repoLinks)
     .innerJoin(pages, eq(pages.id, repoLinks.pageId))
     .innerJoin(spaces, eq(spaces.id, pages.spaceId))
-    .where(eq(repoLinks.repo, repo));
+    .where(and(eq(repoLinks.repo, repo), isNull(spaces.deletedAt)));
 }

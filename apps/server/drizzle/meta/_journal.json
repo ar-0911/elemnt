@@ -71,6 +71,13 @@
       "when": 1795005729835,
       "tag": "0009_space_members",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795016095464,
+      "tag": "0010_space_trash_and_redirects",
+      "breakpoints": true
     }
   ]
 }

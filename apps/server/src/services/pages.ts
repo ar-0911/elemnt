@@ -65,14 +65,16 @@ async function compileAndStore(
 
 export async function createSpace(db: Db, workspaceId: string, input: { slug: string; name: string; visibility: Visibility }) {
   if (!SLUG.test(input.slug)) throw new HttpError(400, `"${input.slug}" is not a valid space slug.`);
-  const existing = await findSpace(db, workspaceId, input.slug);
+  const [existing] = await db.select().from(spaces).where(and(eq(spaces.workspaceId, workspaceId), eq(spaces.slug, input.slug)));
+  if (existing?.deletedAt) throw new HttpError(409, `A space called "${input.slug}" is in the trash. Restore it, or delete it for good in Settings, then try again.`);
   if (existing) throw new HttpError(409, `Space "${input.slug}" already exists.`);
   const [space] = await db.insert(spaces).values({ id: newId("spc"), workspaceId, ...input }).returning();
   return space!;
 }
 
+/** A live space by slug. Spaces in the trash are not found. */
 export async function findSpace(db: Db, workspaceId: string, slug: string) {
-  const [space] = await db.select().from(spaces).where(and(eq(spaces.workspaceId, workspaceId), eq(spaces.slug, slug)));
+  const [space] = await db.select().from(spaces).where(and(eq(spaces.workspaceId, workspaceId), eq(spaces.slug, slug), isNull(spaces.deletedAt)));
   return space;
 }
 

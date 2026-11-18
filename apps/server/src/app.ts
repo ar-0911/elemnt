@@ -44,6 +44,7 @@ import { pageStats, recordView } from "./services/views.js";
 import { canReadSpace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 import * as accounts from "./services/accounts.js";
 import * as spaceAccess from "./services/space-access.js";
+import * as spacesSvc from "./services/spaces.js";
 import { authPage, loginPage, signupPage } from "./render/auth.js";
 import { roles } from "./db/schema.js";
 import * as sitesSvc from "./services/sites.js";
@@ -213,7 +214,7 @@ export function createApp(deps: AppDeps) {
 
   const pageUrl = (space: Space, path: string) => `${deps.config.publicUrl}/s/${space.slug}/${path}`;
 
-  const canRead = (viewer: Viewer | undefined, space: Pick<Space, "id" | "visibility">) => canReadSpace(viewer, space);
+  const canRead = (viewer: Viewer | undefined, space: Pick<Space, "id" | "visibility"> & { deletedAt?: Date | null }) => canReadSpace(viewer, space);
 
   function requireRole(c: Context<Env>, role: "viewer" | "editor" | "admin" | "owner") {
     const viewer = c.get("viewer");
@@ -941,8 +942,17 @@ export function createApp(deps: AppDeps) {
     return b?.map ? c.body(b.map, 200, { "Content-Type": "application/json" }) : c.text("Not found.", 404);
   });
 
+  // Trash older than 30 days is purged lazily, at most hourly per process.
+  let lastPurge = 0;
+  async function purgeTrash(workspaceId: string) {
+    if (Date.now() - lastPurge < 3_600_000) return;
+    lastPurge = Date.now();
+    await spacesSvc.purgeExpired(deps.db, workspaceId).catch((err) => console.error("purgeExpired failed", err));
+  }
+
   app.get("/api/spaces", async (c) => {
     const viewer = c.get("viewer");
+    if (viewer?.role) await purgeTrash(c.get("workspaceId"));
     const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, c.get("workspaceId")) });
     return c.json(all.filter((s) => canRead(viewer, s)));
   });
@@ -980,6 +990,47 @@ export function createApp(deps: AppDeps) {
   app.delete("/api/spaces/:space/members/:userId", async (c) => {
     const space = await privateSpaceForOwner(c);
     await spaceAccess.removeMember(deps.db, space, c.req.param("userId"));
+    return c.body(null, 204);
+  });
+
+  // ---------- deleting spaces (to the trash) ----------
+
+  /** What deleting would touch: page count and any website showing the space. */
+  app.get("/api/spaces/:space/delete-check", async (c) => {
+    requireRole(c, "owner");
+    const space = await readableSpace(c, c.req.param("space"));
+    return c.json(await spacesSvc.deleteCheck(deps.db, deps.blobs, space));
+  });
+
+  app.delete("/api/spaces/:space", async (c) => {
+    const viewer = requireRole(c, "owner");
+    const space = await readableSpace(c, c.req.param("space"));
+    const body = z
+      .object({ confirm: z.string().max(200), pages: z.enum(["trash", "move"]).default("trash"), moveTo: z.string().max(100).optional(), parent: z.string().max(700).nullish() })
+      .parse(await c.req.json().catch(() => ({})));
+    let moveTo: Space | undefined;
+    if (body.pages === "move") {
+      if (!body.moveTo) throw new HttpError(400, "Pick the space to move the pages to.");
+      moveTo = await readableSpace(c, body.moveTo);
+    }
+    const result = await spacesSvc.trashSpace(deps.db, deps.blobs, { space, userId: viewer.userId, confirm: body.confirm, ...(moveTo ? { moveTo, parentPath: body.parent ?? null } : {}) });
+    return c.json(result);
+  });
+
+  app.get("/api/trash", async (c) => {
+    requireRole(c, "owner");
+    await purgeTrash(c.get("workspaceId"));
+    return c.json({ spaces: await spacesSvc.listTrash(deps.db, c.get("workspaceId")), days: spacesSvc.TRASH_DAYS });
+  });
+
+  app.post("/api/trash/:id/restore", async (c) => {
+    requireRole(c, "owner");
+    return c.json(await spacesSvc.restoreSpace(deps.db, c.get("workspaceId"), c.req.param("id")));
+  });
+
+  app.delete("/api/trash/:id", async (c) => {
+    requireRole(c, "owner");
+    await spacesSvc.purgeSpace(deps.db, c.get("workspaceId"), c.req.param("id"));
     return c.body(null, 204);
   });
 
@@ -1027,6 +1078,29 @@ export function createApp(deps: AppDeps) {
     const { viewer, page } = await pageWithAccess(c, "editor");
     const input = saveBody.extend({ baseRevisionId: z.string(), publish: z.boolean().optional() }).parse(await c.req.json());
     return c.json(await pagesSvc.updatePage(pageDeps, { pageId: page.id, authorId: viewer.userId, ...input }));
+  });
+
+  // ---------- moving a page (and its sub-pages) ----------
+
+  const moveBody = z.object({ space: z.string().min(1).max(100), parent: z.string().max(700).nullish(), slug: z.string().max(100).optional() });
+
+  async function moveRequest(c: Context<Env>, input: z.infer<typeof moveBody>) {
+    const { viewer, page } = await pageWithAccess(c, "editor");
+    // Readable is enough on both sides for editors; private targets need membership (or owner).
+    const { space: to } = await writableSpace(c, input.space);
+    return { viewer, page, req: { pageId: page.id, to, parentPath: input.parent ?? null, userId: viewer.userId, ...(input.slug ? { slug: input.slug } : {}) } };
+  }
+
+  /** A dry run: where every page would land, clashes, locks and websites affected. */
+  app.get("/api/pages/:id/move", async (c) => {
+    const { req } = await moveRequest(c, moveBody.parse(c.req.query()));
+    return c.json(spacesSvc.publicPlan(await spacesSvc.planMove(deps.db, deps.blobs, req)));
+  });
+
+  app.post("/api/pages/:id/move", async (c) => {
+    const { req } = await moveRequest(c, moveBody.parse(await c.req.json()));
+    const result = await spacesSvc.movePage(deps.db, deps.blobs, req);
+    return c.json({ ...result, url: pageUrl(req.to, result.path) });
   });
 
   app.post("/api/pages/:id/publish", async (c) => {
@@ -1423,13 +1497,6 @@ export function createApp(deps: AppDeps) {
 
   app.get("/s/:space/*", async (c) => {
     const slug = c.req.param("space");
-    let space: Space;
-    try {
-      space = await readableSpace(c, slug);
-    } catch (err) {
-      if (!c.get("viewer") && err instanceof HttpError && err.status === 404) return c.redirect(`/login?next=${encodeURIComponent(c.req.path)}`);
-      throw err;
-    }
     const rest = decodeURIComponent(c.req.path.slice(`/s/${slug}/`.length));
     const asMarkdownFile = rest.endsWith(".md");
     let path: string;
@@ -1437,6 +1504,22 @@ export function createApp(deps: AppDeps) {
       path = pagesSvc.normalizePath(asMarkdownFile ? rest.slice(0, -3) : rest);
     } catch {
       throw new HttpError(404, "Not found.");
+    }
+    // A page that moved (maybe out of a since-deleted space) leaves its old address behind.
+    // Only when nothing lives there now, and only to readers who can see where it went.
+    const here = await pagesSvc.findSpace(deps.db, c.get("workspaceId"), slug);
+    if (!here || !(await pagesSvc.findPage(deps.db, here.id, path))) {
+      const moved = await spacesSvc.resolveRedirect(deps.db, c.get("workspaceId"), slug, path);
+      if (moved?.page.publishedRevisionId && canRead(c.get("viewer"), moved.space)) {
+        return c.redirect(`/s/${moved.space.slug}/${moved.page.path}${asMarkdownFile ? ".md" : ""}${new URL(c.req.url).search}`, 302);
+      }
+    }
+    let space: Space;
+    try {
+      space = await readableSpace(c, slug);
+    } catch (err) {
+      if (!c.get("viewer") && err instanceof HttpError && err.status === 404) return c.redirect(`/login?next=${encodeURIComponent(c.req.path)}`);
+      throw err;
     }
     const page = await pagesSvc.findPage(deps.db, space.id, path);
     if (!page?.publishedRevisionId) throw new HttpError(404, "Not found.");

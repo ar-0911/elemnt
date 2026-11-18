@@ -101,6 +101,12 @@ export const spaces = pgTable(
     name: text("name").notNull(),
     visibility: text("visibility", { enum: visibilities }).notNull().default("workspace"),
     createdAt: createdAt(),
+    /**
+     * In the trash: hidden from everyone, restorable by owners, purged for good
+     * 30 days later. The slug stays taken so a restore always fits.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: text("deleted_by").references(() => users.id, { onDelete: "set null" }),
   },
   (t) => [uniqueIndex("spaces_workspace_slug").on(t.workspaceId, t.slug)],
 );
@@ -153,6 +159,24 @@ export const pages = pgTable(
  * Page-level or anchored to a quote. The anchor is a text-quote selector
  * (exact text plus a little context) so it survives edits elsewhere on the page.
  */
+/**
+ * Where a page used to live. Moving a page leaves one row per old address so
+ * shared links (/s/<space>/<path>) keep working. Keyed by the space's slug, not
+ * its id, so links still resolve after the old space is deleted. A live page
+ * at the same address always wins.
+ */
+export const pageRedirects = pgTable(
+  "page_redirects",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    spaceSlug: text("space_slug").notNull(),
+    path: text("path").notNull(),
+    pageId: text("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.workspaceId, t.spaceSlug, t.path] }), index("page_redirects_page").on(t.pageId)],
+);
+
 export const comments = pgTable(
   "comments",
   {

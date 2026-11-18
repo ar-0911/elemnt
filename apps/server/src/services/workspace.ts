@@ -77,7 +77,9 @@ export function hasRole(viewer: Viewer | undefined, needed: Role): boolean {
  * The one rule for reading a space. Public: anyone. Workspace: any member.
  * Private: owners, plus members who were added to that space.
  */
-export function canReadSpace(viewer: Viewer | undefined, space: { id: string; visibility: Visibility }): boolean {
+export function canReadSpace(viewer: Viewer | undefined, space: { id: string; visibility: Visibility; deletedAt?: Date | null }): boolean {
+  // A space in the trash is gone for everyone until an owner restores it.
+  if (space.deletedAt) return false;
   if (space.visibility === "public") return true;
   if (!viewer?.role) return false;
   if (space.visibility === "workspace") return true;
