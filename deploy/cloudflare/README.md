@@ -68,7 +68,7 @@ Previews use `<site>--<16 hex>.<domain>` addresses, which the same wildcard cove
 ## How it runs
 
 - `src/index.ts` sends every request, for both hostnames, to one container named `main`. The server tells the two origins apart by `Host`, the same as behind any reverse proxy.
-- `max_instances` is 1: the server keeps rate limits and render caches in memory, so more than one instance would let them drift. A `standard-1` instance is plenty for a team; pick a larger `instance_type` if renders get slow.
-- The container sleeps after 30 minutes without traffic and wakes on the next request; the first request after a sleep takes a few seconds. Raise `sleepAfter` in `src/index.ts` if that bothers you.
+- `max_instances` is 1: the server keeps rate limits and render caches in memory, so more than one instance would let them drift. A `basic` instance (1/4 vCPU, 1 GiB) keeps a personal or small-team install inside the Workers Paid allowance; switch `instance_type` to `standard-1` if renders get slow or memory runs short. Containers bill memory for every minute they are awake, so size and sleep time are what drive cost.
+- The container sleeps after 10 minutes without traffic and wakes on the next request; the first request after a sleep takes a few seconds. Raise `sleepAfter` in `src/index.ts` if that bothers you.
 - The container's disk is thrown away when it sleeps. Nothing lives there: data is in Postgres and blobs are in R2.
 - Variables go to the container through `envVars` in `src/index.ts`. A new server setting has to be added to the `PASSED` list there.
