@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { slugify } from "@elemnt/core";
-import { pageQuestions, spaces } from "../db/schema.js";
+import { pageQuestions, spaces, type Visibility } from "../db/schema.js";
 import { newId } from "../lib/ids.js";
 import type { AiClient } from "./ai.js";
 import { EDIT_SCHEMA, editorSystemPrompt } from "./ai.js";
@@ -161,8 +161,18 @@ export async function suggestFromQuestions(deps: PageDeps, ai: AiClient, input: 
 }
 
 /** Spaces a reader can ground answers in: the page's own space, plus every space for members. */
-export async function groundingSpaces(deps: Pick<PageDeps, "db">, workspaceId: string, pageSpaceId: string, isMember: boolean) {
-  if (!isMember) return [pageSpaceId];
-  const all = await deps.db.select({ id: spaces.id }).from(spaces).where(eq(spaces.workspaceId, workspaceId));
-  return all.map((s) => s.id);
+/**
+ * The spaces an answer may quote. Outside readers get the page's own space;
+ * members get every space they may read, so private spaces they weren't
+ * added to stay out of the answer.
+ */
+export async function groundingSpaces(
+  deps: Pick<PageDeps, "db">,
+  workspaceId: string,
+  pageSpaceId: string,
+  reader: { isMember: boolean; canRead(space: { id: string; visibility: Visibility }): boolean },
+) {
+  if (!reader.isMember) return [pageSpaceId];
+  const all = await deps.db.select({ id: spaces.id, visibility: spaces.visibility }).from(spaces).where(eq(spaces.workspaceId, workspaceId));
+  return all.filter((s) => s.id === pageSpaceId || reader.canRead(s)).map((s) => s.id);
 }

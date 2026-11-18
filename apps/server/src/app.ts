@@ -41,8 +41,9 @@ import { createRequire } from "node:module";
 import { workspaces } from "./db/schema.js";
 import { eq, sql } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
-import { hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
+import { canReadSpace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 import * as accounts from "./services/accounts.js";
+import * as spaceAccess from "./services/space-access.js";
 import { authPage, loginPage, signupPage } from "./render/auth.js";
 import { roles } from "./db/schema.js";
 import * as sitesSvc from "./services/sites.js";
@@ -209,12 +210,9 @@ export function createApp(deps: AppDeps) {
 
   const pageUrl = (space: Space, path: string) => `${deps.config.publicUrl}/s/${space.slug}/${path}`;
 
-  function canRead(viewer: Viewer | undefined, space: Space) {
-    // Per-space membership for "private" arrives with sharing in M3; until then members see both.
-    return space.visibility === "public" || Boolean(viewer?.role);
-  }
+  const canRead = (viewer: Viewer | undefined, space: Pick<Space, "id" | "visibility">) => canReadSpace(viewer, space);
 
-  function requireRole(c: Context<Env>, role: "viewer" | "editor" | "admin") {
+  function requireRole(c: Context<Env>, role: "viewer" | "editor" | "admin" | "owner") {
     const viewer = c.get("viewer");
     if (!viewer) throw new HttpError(401, "Sign in or send an API token.");
     if (!hasRole(viewer, role)) throw new HttpError(403, `You need the ${role} role for this.`);
@@ -230,7 +228,7 @@ export function createApp(deps: AppDeps) {
   async function writableSpace(c: Context<Env>, slug: string) {
     const viewer = requireRole(c, "editor");
     const space = await pagesSvc.findSpace(deps.db, c.get("workspaceId"), slug);
-    if (!space) throw new HttpError(404, `Space "${slug}" not found.`);
+    if (!space || !canRead(viewer, space)) throw new HttpError(404, `Space "${slug}" not found.`);
     return { viewer, space };
   }
 
@@ -456,7 +454,7 @@ export function createApp(deps: AppDeps) {
       ...(body.quote ? { quote: body.quote } : {}),
       source: body.source?.replace(/[^a-z0-9_.-]/gi, "") || "direct",
       ...(viewer ? { askerId: viewer.userId } : {}),
-      spaceIds: await askSvc.groundingSpaces(deps, c.get("workspaceId"), space.id, Boolean(viewer?.role)),
+      spaceIds: await askSvc.groundingSpaces(deps, c.get("workspaceId"), space.id, { isMember: Boolean(viewer?.role), canRead: (s) => canRead(viewer, s) }),
     });
     return c.json(result);
   });
@@ -689,7 +687,7 @@ export function createApp(deps: AppDeps) {
   app.get("/r/:owner/:name", async (c) => {
     const repo = `${c.req.param("owner")}/${c.req.param("name")}`.toLowerCase();
     const viewer = c.get("viewer");
-    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.published && (p.visibility === "public" || viewer?.role));
+    const linked = (await reposSvc.pagesForRepo(deps, repo)).filter((p) => p.published && canRead(viewer, { id: p.spaceId, visibility: p.visibility }));
     const best = linked.find((p) => p.visibility === "public") ?? linked[0];
     if (!best) throw new HttpError(404, "No explainer page for this repo yet.");
     return c.redirect(`/s/${best.spaceSlug}/${best.path}?utm_source=readme`, 302);
@@ -776,7 +774,7 @@ export function createApp(deps: AppDeps) {
     const body = z.object({ repo: z.string().min(3).max(300), space: z.string().min(1).max(100), path: z.string().max(200).optional() }).parse(await c.req.json());
     const repo = normalizeRepo(body.repo);
     const space = await pagesSvc.findSpace(deps.db, c.get("workspaceId"), body.space);
-    if (!space) throw new HttpError(404, "No such space.");
+    if (!space || !canRead(viewer, space)) throw new HttpError(404, "No such space.");
     const ai = await aiFor(c.get("workspaceId"));
     if (!ai) throw new HttpError(400, "Explaining a repo needs Claude. An admin can add an Anthropic API key in Settings, or use Claude Code with the repo-explainer skill instead.");
     limit(explainLog, c.get("workspaceId"), 20, "This workspace has explained 20 repos in the last hour. Try again later.");
@@ -948,8 +946,38 @@ export function createApp(deps: AppDeps) {
 
   app.post("/api/spaces", async (c) => {
     requireRole(c, "admin");
+    const viewer = c.get("viewer")!;
     const input = z.object({ slug: z.string(), name: z.string().min(1).max(120), visibility: z.enum(visibilities).default("workspace") }).parse(await c.req.json());
-    return c.json(await pagesSvc.createSpace(deps.db, c.get("workspaceId"), input), 201);
+    const space = await pagesSvc.createSpace(deps.db, c.get("workspaceId"), input);
+    // Whoever makes a private space can read it, even if they aren't an owner.
+    if (space.visibility === "private" && viewer.role !== "owner") await spaceAccess.addMember(deps.db, space, viewer.userId, viewer.userId);
+    return c.json(space, 201);
+  });
+
+  // ---------- who can read a private space ----------
+
+  async function privateSpaceForOwner(c: Context<Env>) {
+    requireRole(c, "owner");
+    const space = await readableSpace(c, c.req.param("space")!);
+    if (space.visibility !== "private") throw new HttpError(400, "Only private spaces have their own members. Everyone in the workspace can read this one.");
+    return space;
+  }
+
+  app.get("/api/spaces/:space/members", async (c) => {
+    const space = await privateSpaceForOwner(c);
+    return c.json({ members: await spaceAccess.listMembers(deps.db, space) });
+  });
+
+  app.put("/api/spaces/:space/members/:userId", async (c) => {
+    const space = await privateSpaceForOwner(c);
+    await spaceAccess.addMember(deps.db, space, c.req.param("userId"), c.get("viewer")!.userId);
+    return c.body(null, 204);
+  });
+
+  app.delete("/api/spaces/:space/members/:userId", async (c) => {
+    const space = await privateSpaceForOwner(c);
+    await spaceAccess.removeMember(deps.db, space, c.req.param("userId"));
+    return c.body(null, 204);
   });
 
   app.get("/api/spaces/:space/tree", async (c) => {
@@ -972,7 +1000,7 @@ export function createApp(deps: AppDeps) {
     const viewer = requireRole(c, role);
     const page = await pagesSvc.getPage(deps.db, pageId);
     const space = await deps.db.query.spaces.findFirst({ where: (s, { eq }) => eq(s.id, page.spaceId) });
-    if (!space || space.workspaceId !== c.get("workspaceId")) throw new HttpError(404, "Page not found.");
+    if (!space || space.workspaceId !== c.get("workspaceId") || !canRead(viewer, space)) throw new HttpError(404, "Page not found.");
     return { viewer, page, space };
   }
 
@@ -1079,7 +1107,9 @@ export function createApp(deps: AppDeps) {
   });
 
   app.get("/api/revisions/:rev/:rendition{source|html|markdown}", async (c) => {
-    requireRole(c, "viewer");
+    const rev = await deps.db.query.revisions.findFirst({ where: (r, { eq }) => eq(r.id, c.req.param("rev")) });
+    if (!rev) throw new HttpError(404, "Revision not found.");
+    await pageWithAccess(c, "viewer", rev.pageId);
     const body = await pagesSvc.readRevision(deps, c.req.param("rev"), c.req.param("rendition") as pagesSvc.Rendition);
     return c.req.param("rendition") === "html" ? c.text(body) : markdown(c, body);
   });

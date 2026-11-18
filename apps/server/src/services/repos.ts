@@ -155,7 +155,7 @@ export async function checkDrift(deps: PageDeps, gh: GitHubClient, pageId: strin
 /** Pages linked to a repo, for push webhooks, /r/owner/repo and agent search. */
 export async function pagesForRepo(deps: Pick<PageDeps, "db">, repo: string) {
   return deps.db
-    .select({ pageId: repoLinks.pageId, branch: repoLinks.branch, path: pages.path, title: pages.title, summary: pages.summary, published: pages.publishedRevisionId, spaceSlug: spaces.slug, visibility: spaces.visibility })
+    .select({ pageId: repoLinks.pageId, branch: repoLinks.branch, path: pages.path, title: pages.title, summary: pages.summary, published: pages.publishedRevisionId, spaceId: spaces.id, spaceSlug: spaces.slug, visibility: spaces.visibility })
     .from(repoLinks)
     .innerJoin(pages, eq(pages.id, repoLinks.pageId))
     .innerJoin(spaces, eq(spaces.id, pages.spaceId))

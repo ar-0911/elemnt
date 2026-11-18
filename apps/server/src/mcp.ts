@@ -12,7 +12,7 @@ import { normalizeRepo } from "./services/github.js";
 import * as reposSvc from "./services/repos.js";
 import * as levelsSvc from "./services/levels.js";
 import { libraryGuide, listComponents } from "./services/library.js";
-import { hasRole, type Viewer } from "./services/workspace.js";
+import { canReadSpace, hasRole, type Viewer } from "./services/workspace.js";
 import * as themeSvc from "./services/theme.js";
 import * as sitesSvc from "./services/sites.js";
 import { SITE_DESIGN_GUIDE } from "./sites/guide.js";
@@ -41,7 +41,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
 
   async function space(slug: string) {
     const s = await pagesSvc.findSpace(deps.db, ctx.workspaceId, slug);
-    if (!s) throw new HttpError(404, `No space "${slug}". Call list_spaces to see what exists.`);
+    if (!s || !canReadSpace(viewer, s)) throw new HttpError(404, `No space "${slug}". Call list_spaces to see what exists.`);
     return s;
   }
   async function page(spaceSlug: string, path: string) {
@@ -69,7 +69,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
     "list_spaces",
     { title: "List spaces", description: "Lists the documentation spaces in this workspace.", annotations: { readOnlyHint: true } },
     tool(async () => {
-      const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) });
+      const all = (await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).filter((s) => canReadSpace(viewer, s));
       return text(all.map((s) => ({ slug: s.slug, name: s.name, visibility: s.visibility })));
     }),
   );
@@ -92,7 +92,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
       annotations: { readOnlyHint: true },
     },
     tool(async ({ query, space: slug }: { query: string; space?: string }) => {
-      const all = await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) });
+      const all = (await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).filter((s) => canReadSpace(viewer, s));
       const ids = all.filter((s) => !slug || s.slug === slug).map((s) => s.id);
       const hits = await searchPages(deps.db, { query, spaceIds: ids, limit: 10 });
       // A repo URL or owner/name finds that repo's explainer pages first.
@@ -333,7 +333,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         const files = await sitesSvc.listFiles(sitesDeps, s);
         const config = files.some((f) => f.path === "site.json") ? (await sitesSvc.readFile(sitesDeps, s, "site.json")).content : null;
         const space = s.spaceId ? await deps.db.query.spaces.findFirst({ where: (x, { eq }) => eq(x.id, s.spaceId!) }) : undefined;
-        const docs = space ? (await pagesSvc.listPages(deps.db, space.id)).map((p) => ({ path: p.path, title: p.title, published: p.published })) : [];
+        const docs = space && canReadSpace(viewer, space) ? (await pagesSvc.listPages(deps.db, space.id)).map((p) => ({ path: p.path, title: p.title, published: p.published })) : [];
         const open = await sitesSvc.listChangesets(sitesDeps, s, "open");
         return text({
           ...sitesSvc.describe(sitesDeps, s),

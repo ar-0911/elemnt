@@ -6,6 +6,7 @@ import { PageEditor } from "./PageEditor";
 import { Palette } from "./Palette";
 import { Settings, type SettingsTab } from "./Settings";
 import { siteNavigate, SitesHome } from "./SiteStudio";
+import { SpaceMembersDialog } from "./SpaceMembers";
 import { navigate, useRoute } from "./router";
 import { withStyle } from "./look";
 import { restartTour, Tour } from "./Tour";
@@ -226,6 +227,7 @@ function NewSpaceDialog({ onClose, onCreate }: { onClose(): void; onCreate(name:
   const options: { value: Space["visibility"]; icon: IconName; title: string; body: string }[] = [
     { value: "workspace", icon: "team", title: "Workspace", body: "Everyone in this workspace can read it. Good for internal docs." },
     { value: "public", icon: "globe", title: "Public", body: "Anyone with the link can read published pages. Good for READMEs and open source." },
+    { value: "private", icon: "lock", title: "Private", body: "Only people you add, plus workspace owners. Good for infrastructure and anything sensitive." },
   ];
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -327,7 +329,7 @@ function Shell() {
   const [pages, setPages] = useState<TreePage[]>([]);
   const [palette, setPalette] = useState(false);
   const [settings, setSettings] = useState<SettingsTab | false>(false);
-  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys">();
+  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys" | "access">();
 
   useEffect(() => {
     getMe()
@@ -457,7 +459,14 @@ function Shell() {
 
         {route.space && !onSites && (
           <nav className="side-section grow" aria-label={`Pages in ${space?.name ?? route.space}`}>
-            <div className="side-label">Pages</div>
+            <div className="side-label">
+              Pages
+              {space?.visibility === "private" && me?.role === "owner" && (
+                <button type="button" className="icon-btn small" aria-label="Who can read this space" title="Who can read this space" onClick={() => setDialog("access")}>
+                  <Icon name="team" size={14} />
+                </button>
+              )}
+            </div>
             <Tree pages={pages} space={route.space} current={route.path} />
           </nav>
         )}
@@ -513,6 +522,7 @@ function Shell() {
       )}
       {dialog === "space" && <NewSpaceDialog onClose={() => setDialog(undefined)} onCreate={createSpace} />}
       {dialog === "keys" && <ShortcutsDialog onClose={() => setDialog(undefined)} />}
+      {dialog === "access" && space && <SpaceMembersDialog space={space} onClose={() => setDialog(undefined)} />}
       {palette && route.space && (
         <Palette
           space={route.space}

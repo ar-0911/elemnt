@@ -105,6 +105,21 @@ export const spaces = pgTable(
   (t) => [uniqueIndex("spaces_workspace_slug").on(t.workspaceId, t.slug)],
 );
 
+/**
+ * Who can read a private space. Owners can always read every space; everyone
+ * else needs a row here (and to still be a member of the workspace).
+ */
+export const spaceMembers = pgTable(
+  "space_members",
+  {
+    spaceId: text("space_id").notNull().references(() => spaces.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    addedBy: text("added_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.spaceId, t.userId] }), index("space_members_user").on(t.userId)],
+);
+
 export const pages = pgTable(
   "pages",
   {
