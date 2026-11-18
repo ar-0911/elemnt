@@ -455,6 +455,8 @@ a.tile:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
 .move-summary p.callout-note { display: block; }
 .row-actions { margin-left: auto; display: inline-flex; gap: 6px; }
 .side-label .menu-wrap { display: inline-flex; }
-.side-label .menu-trigger { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--muted); }
-.side-label .menu-trigger:hover { background: var(--hover, color-mix(in srgb, var(--fg, #888) 8%, transparent)); }
+.side-label .menu-trigger { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: var(--r-sm); background: transparent; box-shadow: none; color: var(--muted); cursor: pointer; }
+.side-label .menu-trigger:hover, .side-label .menu-trigger[aria-expanded="true"] { background: var(--soft); color: var(--fg); }
+/* The menu sits under the label: undo the label's small caps and keep it inside the sidebar. */
+.side-label .menu { min-width: 180px; font: 400 14px system-ui; letter-spacing: normal; text-transform: none; }
 .side-actions { display: inline-flex; align-items: center; gap: 2px; }
