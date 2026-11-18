@@ -18,7 +18,7 @@ A site is a real multi-page website for one project: its own layout, nav, home p
 | \`styles/*\`, \`scripts/*\`, \`assets/*\` | Served as is at the same path (\`/scripts/scene.js\`). Binary assets (png, glb, woff2…) are base64. |
 | \`data/*.json\` | Extra data, available as \`site.data.<name>\`. |
 
-Every published page of the linked space becomes \`<docs.prefix>/<path>\` (default \`/docs/...\`), rendered inside \`layouts/<docs.layout>.liquid\` (default \`docs\`). A space page called \`index\` is the docs home; otherwise Elemnt generates a card index. Docs update the moment a page is published; the design changes only when the site is published.
+Every published page of the linked space becomes \`<docs.prefix>/<path>\` (default \`/docs/...\`), rendered inside \`layouts/<docs.layout>.liquid\` (default \`docs\`). A space page called \`index\` is the docs home; otherwise Elemnt generates a card index. Set \`docs.root\` (e.g. \`"ares"\`) to use only that page and its children from a shared space: the root page becomes the docs home and \`ares/flags\` becomes \`/docs/flags\`. Docs update the moment a page is published; the design changes only when the site is published.
 
 ### site.json
 

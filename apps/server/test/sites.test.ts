@@ -96,6 +96,25 @@ describe("project websites", () => {
     expect(await missing.text()).toContain("site-header");
   });
 
+  it("can show one subtree of a shared space as the site's docs", async () => {
+    await makeSite();
+    await page("ares", "---\ntitle: Ares\nsummary: Agents on machines.\n---\n\nOverview.\n");
+    await page("ares/flags", "---\ntitle: Flags\n---\n\nAll flags.\n");
+    await page("braid", "# Braid\n\nNot this one.\n");
+    const cfg = JSON.parse(((await (await t.call("/api/sites/acme/files/site.json", { token: t.ownerToken })).json()) as { content: string }).content) as { docs?: Record<string, unknown> };
+    cfg.docs = { ...cfg.docs, root: "ares" };
+    await putFiles([{ path: "site.json", content: JSON.stringify(cfg) }]);
+    await publish();
+    const index = await (await site("acme", "/docs")).text();
+    expect(index).toContain("Overview.");
+    expect(index).toContain('href="/docs/flags"');
+    expect(index).not.toContain("Braid");
+    expect((await site("acme", "/docs/flags")).status).toBe(200);
+    expect((await site("acme", "/docs/braid")).status).toBe(404);
+    expect((await site("acme", "/docs/ares/flags")).status).toBe(404);
+    expect(await (await site("acme", "/llms.txt")).text()).toContain(`(https://acme.${SITES_DOMAIN}/docs/flags.md)`);
+  });
+
   it("keeps docs current: a page published later shows up without republishing the site", async () => {
     await makeSite();
     await publish();

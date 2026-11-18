@@ -35,6 +35,15 @@ export const siteConfigSchema = z
         layout: z.string().default("docs"),
         /** Title of the generated docs index when the space has no `index` page. */
         title: z.string().default("Documentation"),
+        /**
+         * Use only the space's pages at or under this path, re-rooted: with
+         * root "ares", page ares is the docs index and ares/flags is /docs/flags.
+         * Lets several sites share one space without moving pages.
+         */
+        root: z
+          .string()
+          .regex(/^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*$/, 'docs.root is a page path like "ares"')
+          .optional(),
       })
       .default({ prefix: "/docs", layout: "docs", title: "Documentation" }),
     /** Layout for designed pages that don't name one. */
@@ -137,7 +146,7 @@ export function designedRoutes(tree: Tree): Map<string, string> {
   return out;
 }
 
-const docRoute = (config: SiteConfig, path: string) => `${config.docs.prefix}/${path}`.replace(/^\/\//, "/");
+const docRoute = (config: SiteConfig, path: string) => (path === "index" ? config.docs.prefix || "/" : `${config.docs.prefix}/${path}`.replace(/^\/\//, "/"));
 
 export function resolve(snapshot: SiteSnapshot, config: SiteConfig, pathname: string): Resolved | undefined {
   const path = decodeURIComponent(pathname).replace(/\/+$/, "") || "/";
@@ -337,8 +346,22 @@ export interface RenderedPage {
  * Renders routes of one snapshot. Create one per snapshot: it loads the
  * templates once and reuses the Liquid engine.
  */
-export async function siteRenderer(deps: RenderDeps, snapshot: SiteSnapshot) {
-  const { config, diagnostics: configDiagnostics } = await readConfig(deps.blobs, snapshot.tree);
+/** The docs a site shows: all of the space, or the subtree under docs.root with paths re-rooted. */
+export function scopeDocs(config: SiteConfig, docs: DocPage[]): DocPage[] {
+  const root = config.docs.root;
+  if (!root) return docs;
+  const out: DocPage[] = [];
+  for (const d of docs) {
+    if (d.path === root) out.push({ ...d, path: "index" });
+    else if (d.path.startsWith(`${root}/`)) out.push({ ...d, path: d.path.slice(root.length + 1) });
+  }
+  // A child literally named "index" would clash with the root page; the root wins.
+  return out.filter((d, i) => d.path !== "index" || out.findIndex((x) => x.path === "index") === i);
+}
+
+export async function siteRenderer(deps: RenderDeps, input: SiteSnapshot) {
+  const { config, diagnostics: configDiagnostics } = await readConfig(deps.blobs, input.tree);
+  const snapshot: SiteSnapshot = { ...input, docs: scopeDocs(config, input.docs) };
   const templates = new Map<string, string>();
   await Promise.all(
     Object.keys(snapshot.tree.files)
