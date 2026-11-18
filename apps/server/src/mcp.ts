@@ -14,6 +14,8 @@ import * as levelsSvc from "./services/levels.js";
 import { libraryGuide, listComponents } from "./services/library.js";
 import { hasRole, type Viewer } from "./services/workspace.js";
 import * as themeSvc from "./services/theme.js";
+import * as sitesSvc from "./services/sites.js";
+import { SITE_DESIGN_GUIDE } from "./sites/guide.js";
 
 /** Components the style guide explains; the rest are in the authoring guide. */
 const LAYOUT = ["hero", "cards", "stats", "timeline", "band", "badge", "quote", "graphic", "widget"];
@@ -21,6 +23,7 @@ const LAYOUT = ["hero", "cards", "stats", "timeline", "band", "badge", "quote", 
 interface McpDeps extends pagesSvc.PageDeps {
   config: Config;
   github: GitHubClient;
+  sites?: sitesSvc.SitesDeps;
 }
 
 const text = (value: unknown) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] });
@@ -288,6 +291,161 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
     }),
   );
 
+
+  // ---------- project websites ----------
+  const sitesDeps = deps.sites;
+  if (sitesDeps) {
+    const siteReview = (slug: string, changeset?: string) => `${deps.config.publicUrl}/app/sites/${slug}${changeset ? `?changeset=${changeset}` : ""}`;
+    const requireSite = (slug: string) => sitesSvc.requireSite(deps.db, ctx.workspaceId, slug).catch(() => {
+      throw new HttpError(404, `No site "${slug}". Call list_sites, or create_site.`);
+    });
+
+    server.registerTool(
+      "list_sites",
+      { title: "List project websites", description: "Lists the workspace's project websites: name, address, linked docs space, repo, and whether they're published.", annotations: { readOnlyHint: true } },
+      tool(async () => {
+        const all = await sitesSvc.listSites(sitesDeps, ctx.workspaceId);
+        const spaceSlugs = new Map((await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).map((s) => [s.id, s.slug]));
+        return text(all.map((s) => ({ site: s.slug, name: s.name, url: s.url, docsSpace: s.spaceId ? spaceSlugs.get(s.spaceId) : null, repo: s.repo, published: s.published, unpublishedChanges: s.unpublishedChanges })));
+      }),
+    );
+
+    server.registerTool(
+      "get_site_design_guide",
+      {
+        title: "Site design guide",
+        description: "How project websites work: the files (site.json, Liquid layouts, partials, pages, styles, scripts, assets), template variables, :::section for design inside Markdown, the built-in helpers (search, reveals, tilt, theme toggle) and how to build 3D scenes with three.js. Read it before designing or changing a site.",
+        annotations: { readOnlyHint: true },
+      },
+      tool(async () => text(SITE_DESIGN_GUIDE)),
+    );
+
+    server.registerTool(
+      "get_site",
+      {
+        title: "Read a project website",
+        description: "A site's settings (site.json), every file with its size, its docs space and pages, open change sets, and its address. Read files with read_site_file.",
+        inputSchema: { site: z.string() },
+        annotations: { readOnlyHint: true },
+      },
+      tool(async ({ site }: { site: string }) => {
+        const s = await requireSite(site);
+        const files = await sitesSvc.listFiles(sitesDeps, s);
+        const config = files.some((f) => f.path === "site.json") ? (await sitesSvc.readFile(sitesDeps, s, "site.json")).content : null;
+        const space = s.spaceId ? await deps.db.query.spaces.findFirst({ where: (x, { eq }) => eq(x.id, s.spaceId!) }) : undefined;
+        const docs = space ? (await pagesSvc.listPages(deps.db, space.id)).map((p) => ({ path: p.path, title: p.title, published: p.published })) : [];
+        const open = await sitesSvc.listChangesets(sitesDeps, s, "open");
+        return text({
+          ...sitesSvc.describe(sitesDeps, s),
+          docsSpace: space?.slug ?? null,
+          docs,
+          siteJson: config,
+          files: files.map((f) => ({ path: f.path, size: f.size, binary: f.encoding === "base64" })),
+          openChangeSets: open.map((c) => ({ id: c.id, summary: c.summary, files: c.changes.map((f) => f.path), review: siteReview(s.slug, c.id) })),
+        });
+      }),
+    );
+
+    server.registerTool(
+      "read_site_file",
+      { title: "Read a site file", description: "Reads one file of a site's current draft (binary files come back base64).", inputSchema: { site: z.string(), path: z.string() }, annotations: { readOnlyHint: true } },
+      tool(async ({ site, path }: { site: string; path: string }) => {
+        const f = await sitesSvc.readFile(sitesDeps, await requireSite(site), path);
+        return text(f.encoding === "base64" ? { path: f.path, encoding: "base64", content: f.content } : `<!-- elemnt site file: ${f.path} -->\n${f.content}`);
+      }),
+    );
+
+    if (canEdit) {
+      server.registerTool(
+        "create_site",
+        {
+          title: "Create a project website",
+          description:
+            "Creates a new project website from the starter design (multi-page with top nav, docs layout, 3D hero), unpublished. `space` is the docs space whose pages become /docs; create one first if needed. The site's address is <site>.<sites domain>. Then restyle it with propose_site_changes.",
+          inputSchema: {
+            site: z.string().describe('Lowercase name, also the subdomain, e.g. "rocket"'),
+            name: z.string(),
+            space: z.string().optional(),
+            repo: z.string().optional().describe("owner/name of the repo the site is about"),
+            tagline: z.string().optional(),
+            template: z.enum(["starter", "blank"]).default("starter"),
+          },
+        },
+        tool(async (args: { site: string; name: string; space?: string; repo?: string; tagline?: string; template: "starter" | "blank" }) => {
+          const created = await sitesSvc.createSite(sitesDeps, ctx.workspaceId, {
+            slug: args.site,
+            name: args.name,
+            template: args.template,
+            ...(args.space ? { spaceSlug: args.space } : {}),
+            ...(args.repo ? { repo: normalizeRepo(args.repo) } : {}),
+            ...(args.tagline ? { tagline: args.tagline } : {}),
+          });
+          const prev = await sitesSvc.preview(sitesDeps, created, viewer.userId);
+          return text({ site: created.slug, status: "unpublished", preview: prev.url, studio: siteReview(created.slug), files: (await sitesSvc.listFiles(sitesDeps, created)).map((f) => f.path) });
+        }),
+      );
+
+      server.registerTool(
+        "propose_site_changes",
+        {
+          title: "Propose site changes",
+          description:
+            "Proposes whole-file changes to a site (create, replace, or delete with content null). Nothing changes until a person applies it in the studio. Returns a preview URL showing the site with these changes, plus any template errors to fix. Read files first with read_site_file; send complete file contents.",
+          inputSchema: {
+            site: z.string(),
+            summary: z.string().describe("One line for the reviewer: what changed and why."),
+            files: z
+              .array(z.object({ path: z.string(), content: z.string().nullable(), encoding: z.enum(["utf8", "base64"]).optional() }))
+              .min(1)
+              .max(120),
+          },
+        },
+        tool(async (args: { site: string; summary: string; files: { path: string; content: string | null; encoding?: "utf8" | "base64" }[] }) => {
+          const s = await requireSite(args.site);
+          const cs = await sitesSvc.proposeChanges(sitesDeps, s, { summary: args.summary, files: args.files, authorId: viewer.userId, source: "mcp" });
+          const prev = await sitesSvc.previewChangeset(sitesDeps, s, cs.id, viewer.userId);
+          return text({ changeSet: cs.id, review: siteReview(s.slug, cs.id), preview: prev.url, diagnostics: prev.diagnostics });
+        }),
+      );
+
+      server.registerTool(
+        "preview_site",
+        {
+          title: "Preview a site",
+          description: "Makes a private preview URL of the site's current draft (with the latest docs) and reports template errors.",
+          inputSchema: { site: z.string() },
+        },
+        tool(async ({ site }: { site: string }) => {
+          const s = await requireSite(site);
+          const prev = await sitesSvc.preview(sitesDeps, s, viewer.userId);
+          return text({ preview: prev.url, diagnostics: prev.diagnostics });
+        }),
+      );
+    }
+
+    server.registerPrompt(
+      "design_site",
+      {
+        title: "Design a project website",
+        description: "Design (or redesign) an immersive website for a project: its own look, 3D, and the project's docs inside.",
+        argsSchema: { project: z.string().describe("The project, e.g. a repo URL or name"), site: z.string().optional().describe("Existing site to restyle") },
+      },
+      ({ project, site }) => ({
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Design a project website for ${project} in Elemnt.${site ? ` Restyle the existing site "${site}".` : " Check list_sites first; create one with create_site if it doesn't exist (and a docs space if needed)."}
+
+Read get_site_design_guide. Learn the project (its repo and README, and its docs with list_pages/get_page). Ask me, in one short message with options, about mood, colours, fonts, how much motion, and what the 3D should show, unless I've already said. Then design it like a polished product site or portfolio for this project: a home page with an interactive 3D scene about what the project actually does, sections that explain it with motion and real details, a showcase, and a docs layout with sidebar, search and table of contents. Keep the words exact and scannable. Propose the files with propose_site_changes, open the preview URL it returns, fix any errors, and give me the review link.`,
+            },
+          },
+        ],
+      }),
+    );
+  }
+
   server.registerPrompt(
     "generate_docs",
     {
@@ -315,7 +473,9 @@ First search for an existing page on this; if one exists, improve it with sugges
 
 const INSTRUCTIONS = `Elemnt hosts this team's documentation. Pages are written in Markdown with directives for rich components; people see a rendered page and you get Markdown.
 
-To answer questions, use search, then get_page. To write docs, call get_style_guide and get_authoring_guide once. Follow the organization theme if there is one; otherwise ask the user what style and fonts they'd like (or use their saved style). Pages should look like a designed web page and pull the reader in, while staying exact and easy to scan. Then use create_draft for new pages or suggest_edit for existing ones, and validate first. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back.`;
+To answer questions, use search, then get_page. To write docs, call get_style_guide and get_authoring_guide once. Follow the organization theme if there is one; otherwise ask the user what style and fonts they'd like (or use their saved style). Pages should look like a designed web page and pull the reader in, while staying exact and easy to scan. Then use create_draft for new pages or suggest_edit for existing ones, and validate first. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back.
+
+Projects can also have their own website (list_sites): a fully designed multi-page site, with 3D and motion, around the project's docs. To build or restyle one, read get_site_design_guide, then use create_site and propose_site_changes; a person applies and publishes.`;
 
 /** Handles one stateless MCP request (Streamable HTTP, JSON responses). */
 export async function handleMcp(req: Request, deps: McpDeps, ctx: { viewer: Viewer; workspaceId: string }): Promise<Response> {

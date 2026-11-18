@@ -314,6 +314,16 @@ export async function preview(deps: SitesDeps, site: Site, userId: string) {
 }
 
 /** 16 hex characters: unguessable, and short enough that `<slug>--<id>` fits in one DNS label. */
+/** A preview of the draft with a change set applied, so Claude (and the reviewer) can see it before it lands. */
+export async function previewChangeset(deps: SitesDeps, site: Site, id: string, userId: string) {
+  const [cs] = await deps.db.select().from(siteChangesets).where(and(eq(siteChangesets.id, id), eq(siteChangesets.siteId, site.id)));
+  if (!cs) throw new HttpError(404, "No such change set.");
+  const tree = await saveTree(deps.blobs, await writeFiles(deps.blobs, await loadTree(deps.blobs, site.draftTree), cs.changes));
+  const [release] = await deps.db.insert(siteReleases).values({ id: newPreviewId(), siteId: site.id, kind: "preview", tree, createdBy: userId }).returning();
+  const diagnostics = await checkSite(deps, site, tree);
+  return { id: release!.id, url: siteUrl(deps, site, release!.id) ?? null, diagnostics };
+}
+
 const newPreviewId = () => randomBytes(8).toString("hex");
 
 /** Publishes the draft (or an earlier release, to roll back). Blocks on template errors. */

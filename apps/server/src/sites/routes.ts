@@ -16,8 +16,13 @@ type AnyEnv = any;
 export interface SiteRouteDeps extends sitesSvc.SitesDeps {
   requireRole(c: Context<AnyEnv>, role: "viewer" | "editor" | "admin"): Viewer;
   workspaceId(c: Context<AnyEnv>): string;
-  /** Builds a change set from a repo with the workspace's Claude key (services/site-generate.ts). */
-  generate?(c: Context<AnyEnv>, site: sitesSvc.Site, input: { repo?: string; brief?: string }, viewer: Viewer): Promise<unknown>;
+  /**
+   * Starts building a change set from a repo with the workspace's Claude key
+   * (services/site-generate.ts). Throws at once if Claude isn't set up;
+   * otherwise returns the work, which runs in the background.
+   */
+  generate?(c: Context<AnyEnv>, site: sitesSvc.Site, input: { repo?: string; brief?: string }, viewer: Viewer): Promise<() => Promise<unknown>>;
+  background(task: Promise<unknown>): void;
 }
 
 const fileChange = z.object({ path: z.string().max(300), content: z.string().max(4_500_000).nullable(), encoding: z.enum(["utf8", "base64"]).optional() });
@@ -140,10 +145,30 @@ export function registerSiteRoutes(app: Hono<AnyEnv>, deps: SiteRouteDeps) {
     return c.body(null, 204);
   });
 
+  const jobs = new Map<string, { workspaceId: string; site: string; status: "running" | "done" | "failed"; at: number; result?: unknown; error?: string }>();
+
   app.post("/api/sites/:slug/generate", async (c) => {
     const viewer = deps.requireRole(c, "editor");
     if (!deps.generate) return c.json({ error: "Generating sites isn't available on this server." }, 501);
     const input = z.object({ repo: z.string().max(200).optional(), brief: z.string().max(4000).optional() }).parse(await c.req.json().catch(() => ({})));
-    return c.json(await deps.generate(c, await site(c), input, viewer), 201);
+    const s = await site(c);
+    const work = await deps.generate(c, s, input, viewer);
+    const id = crypto.randomUUID();
+    const job: { workspaceId: string; site: string; status: "running" | "done" | "failed"; at: number; result?: unknown; error?: string } = { workspaceId: deps.workspaceId(c), site: s.slug, status: "running", at: Date.now() };
+    jobs.set(id, job);
+    for (const [k, j] of jobs) if (Date.now() - j.at > 24 * 3_600_000) jobs.delete(k);
+    deps.background(
+      work()
+        .then((result) => Object.assign(job, { status: "done", result }))
+        .catch((err: unknown) => Object.assign(job, { status: "failed", error: err instanceof Error && "status" in err ? err.message : "Something went wrong while designing the site." })),
+    );
+    return c.json({ id, status: "running" }, 202);
+  });
+
+  app.get("/api/sites/:slug/generate/:id", async (c) => {
+    deps.requireRole(c, "editor");
+    const job = jobs.get(c.req.param("id"));
+    if (!job || job.workspaceId !== deps.workspaceId(c) || job.site !== c.req.param("slug")) return c.json({ error: "No such job." }, 404);
+    return c.json({ status: job.status, ...(job.result ? { result: job.result } : {}), ...(job.error ? { error: job.error } : {}) });
   });
 }

@@ -48,6 +48,7 @@ import { roles } from "./db/schema.js";
 import * as sitesSvc from "./services/sites.js";
 import { siteHost } from "./sites/host.js";
 import { registerSiteRoutes } from "./sites/routes.js";
+import { generateSite } from "./services/site-generate.js";
 
 export interface AppDeps {
   db: Db;
@@ -1338,7 +1339,7 @@ export function createApp(deps: AppDeps) {
       c.header("WWW-Authenticate", `Bearer resource_metadata="${deps.config.publicUrl}/.well-known/oauth-protected-resource"`);
       return c.json({ error: "Connect with OAuth or send an Elemnt API token." }, 401);
     }
-    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh }, { viewer, workspaceId: c.get("workspaceId") });
+    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh, sites: sitesDeps }, { viewer, workspaceId: c.get("workspaceId") });
   });
 
   /** Landing pages wear the workspace theme; without one, Elemnt's own Aurora look. */
@@ -1471,7 +1472,20 @@ export function createApp(deps: AppDeps) {
     );
   });
 
-  registerSiteRoutes(app, { ...sitesDeps, requireRole, workspaceId: (c) => c.get("workspaceId") });
+  const siteGenerateLog = new Map<string, number[]>();
+  registerSiteRoutes(app, {
+    ...sitesDeps,
+    requireRole,
+    workspaceId: (c) => c.get("workspaceId"),
+    background,
+    async generate(c, site, input, viewer) {
+      const ai = await aiFor(c.get("workspaceId"));
+      if (!ai) throw new HttpError(400, "Designing a site needs Claude. An admin can add an Anthropic API key in Settings, or use Claude Code with the Elemnt connector (prompt: design_site).");
+      limit(siteGenerateLog, c.get("workspaceId"), 10, "This workspace has designed 10 sites in the last hour. Try again later.");
+      const repo = input.repo ? normalizeRepo(input.repo) : undefined;
+      return () => generateSite({ ...pageDeps, sites: sitesDeps }, gh, ai, { site, userId: viewer.userId, ...(repo ? { repo } : {}), ...(input.brief ? { brief: input.brief } : {}) });
+    },
+  });
 
   return app;
 }
