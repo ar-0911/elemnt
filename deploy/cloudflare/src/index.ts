@@ -35,7 +35,7 @@ const PASSED = [
 /** The Elemnt server, from apps/server/Dockerfile. It listens on 8787 and sleeps when idle. */
 export class Elemnt extends Container<Env> {
   defaultPort = 8787;
-  sleepAfter = "30m";
+  sleepAfter = "10m";
 
   constructor(ctx: DurableObjectState<{}>, env: Env) {
     super(ctx, env);

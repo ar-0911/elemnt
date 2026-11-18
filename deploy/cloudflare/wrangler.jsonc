@@ -40,7 +40,7 @@
       // Built from the repo root with the same Dockerfile as docker compose.
       "image": "../../apps/server/Dockerfile",
       "image_build_context": "../..",
-      "instance_type": "standard-1",
+      "instance_type": "basic",
       // One instance: the server keeps rate limits and caches in memory.
       "max_instances": 1
     }
