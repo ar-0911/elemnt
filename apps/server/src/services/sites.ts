@@ -36,6 +36,13 @@ export function checkSlug(slug: string) {
 
 const HOSTNAME = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
+/** The frame-src entry that covers every site preview, for the editor's CSP. */
+export function previewFrameSource(deps: Pick<SitesDeps, "sitesDomain" | "publicUrl">): string | undefined {
+  if (!deps.sitesDomain) return undefined;
+  const app = new URL(deps.publicUrl);
+  return `${app.protocol}//*.${deps.sitesDomain}${app.port ? `:${app.port}` : ""}`;
+}
+
 /** The address a site is served at, or undefined when neither a domain nor a hostname is configured. */
 export function siteUrl(deps: Pick<SitesDeps, "sitesDomain" | "publicUrl">, site: Pick<Site, "slug" | "hostname">, previewId?: string): string | undefined {
   const app = new URL(deps.publicUrl);

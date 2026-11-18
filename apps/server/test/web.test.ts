@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, it } from "vitest";
-import { editorApp } from "../src/web.js";
+import { previewFrameSource } from "../src/services/sites.js";
+import { editorApp, editorCsp } from "../src/web.js";
 
 describe("editor static serving", () => {
   let app: Hono;
@@ -34,5 +35,14 @@ describe("editor static serving", () => {
     expect(await (await app.request("/app/secret.txt")).text()).toContain("id=root");
     expect((await app.request("/app/assets/../../etc/passwd")).status).not.toBe(500);
     expect((await app.request("/app/assets/missing.js")).status).toBe(404);
+  });
+
+  it("lets the editor frame the sandbox and site previews, nothing else", () => {
+    const preview = previewFrameSource({ sitesDomain: "sites.example.com", publicUrl: "https://docs.example.com" });
+    expect(preview).toBe("https://*.sites.example.com");
+    expect(editorCsp("https://sandbox.example.com/w", [preview!])).toContain("frame-src https://sandbox.example.com https://*.sites.example.com;");
+    expect(previewFrameSource({ sitesDomain: "localhost", publicUrl: "http://localhost:3000" })).toBe("http://*.localhost:3000");
+    expect(previewFrameSource({ publicUrl: "https://docs.example.com" })).toBeUndefined();
+    expect(editorCsp()).toContain("frame-src 'none'");
   });
 });

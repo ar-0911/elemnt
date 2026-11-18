@@ -204,7 +204,10 @@ export function createApp(deps: AppDeps) {
     if (!c.get("viewer") && !path.startsWith("/app/assets/")) return c.redirect(`/login?next=${encodeURIComponent(path)}`);
     await next();
   });
-  if (deps.webDir) app.route("/app", editorApp(deps.webDir, sandboxUrl));
+  if (deps.webDir) {
+    const preview = sitesSvc.previewFrameSource(sitesDeps);
+    app.route("/app", editorApp(deps.webDir, sandboxUrl, preview ? [preview] : []));
+  }
 
   // ---------- helpers ----------
 
