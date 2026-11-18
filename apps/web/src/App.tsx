@@ -5,6 +5,7 @@ import { checklistFlag, Home } from "./Home";
 import { PageEditor } from "./PageEditor";
 import { Palette } from "./Palette";
 import { Settings, type SettingsTab } from "./Settings";
+import { siteNavigate, SitesHome } from "./SiteStudio";
 import { navigate, useRoute } from "./router";
 import { withStyle } from "./look";
 import { restartTour, Tour } from "./Tour";
@@ -343,8 +344,9 @@ function Shell() {
     if (new URLSearchParams(location.search).has("welcome")) history.replaceState(null, "", location.pathname);
   }, [toast]);
 
+  const onSites = route.space === "sites";
   const loadTree = useCallback(() => {
-    if (route.space) void api.get<{ pages: TreePage[] }>(`/api/spaces/${route.space}/tree`).then((t) => setPages(t.pages));
+    if (route.space && route.space !== "sites") void api.get<{ pages: TreePage[] }>(`/api/spaces/${route.space}/tree`).then((t) => setPages(t.pages));
   }, [route.space]);
   useEffect(loadTree, [loadTree]);
 
@@ -442,7 +444,18 @@ function Shell() {
           </ul>
         </nav>
 
-        {route.space && (
+        <nav className="side-section" aria-label="Websites">
+          <ul className="spaces">
+            <li>
+              <a href="/app/sites" aria-current={onSites ? "page" : undefined} onClick={(e) => (e.preventDefault(), siteNavigate())}>
+                <Icon name="layout" size={15} />
+                <span>Websites</span>
+              </a>
+            </li>
+          </ul>
+        </nav>
+
+        {route.space && !onSites && (
           <nav className="side-section grow" aria-label={`Pages in ${space?.name ?? route.space}`}>
             <div className="side-label">Pages</div>
             <Tree pages={pages} space={route.space} current={route.path} />
@@ -473,7 +486,9 @@ function Shell() {
         </div>
       </aside>
 
-      {current ? (
+      {onSites ? (
+        <SitesHome canEdit={canEdit} spaces={spaces} slug={route.path} />
+      ) : current ? (
         <PageEditor key={current.id} pageId={current.id} canEdit={canEdit} space={space} onChanged={loadTree} />
       ) : (
         <Home me={me} space={space} spaces={spaces} pages={pages} canEdit={canEdit} canAdmin={canAdmin} onNewPage={() => setDialog("page")} onExplain={() => setDialog("explain")} onNewSpace={() => setDialog("space")} onSettings={(tab) => setSettings((tab as SettingsTab) ?? "account")} />

@@ -408,3 +408,77 @@ export const libraryComponents = pgTable(
   },
   (t) => [uniqueIndex("library_components_slug").on(t.workspaceId, t.slug)],
 );
+
+/**
+ * A project website: its own design (layouts, partials, CSS, JS, assets as
+ * files) around the Markdown pages of one space, served on its own hostname.
+ * The files live here, never in git. `draftTree` is what the studio and Claude
+ * edit; `publishedTree` is what visitors get. A tree is the sha256 of a JSON
+ * manifest blob ({ path: { hash, encoding } }).
+ */
+export const sites = pgTable(
+  "sites",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    /** Also the subdomain: `<slug>.<ELEMNT_SITES_DOMAIN>`. */
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    /** The space whose published pages become the site's docs. */
+    spaceId: text("space_id").references(() => spaces.id, { onDelete: "set null" }),
+    /** A full hostname instead of the subdomain, e.g. www.example.com. */
+    hostname: text("hostname"),
+    /** owner/name of the repo the site is about, if any. */
+    repo: text("repo"),
+    draftTree: text("draft_tree").notNull(),
+    publishedTree: text("published_tree"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("sites_workspace_slug").on(t.workspaceId, t.slug), uniqueIndex("sites_hostname").on(t.hostname)],
+);
+
+/**
+ * Every publish and preview, so a release can be rolled back to and a preview
+ * has an unguessable URL (`<slug>--<id>.<domain>`).
+ */
+export const siteReleases = pgTable(
+  "site_releases",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id").notNull().references(() => sites.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["publish", "preview"] }).notNull(),
+    tree: text("tree").notNull(),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("site_releases_site").on(t.siteId, t.createdAt)],
+);
+
+export interface SiteFileChange {
+  path: string;
+  /** New content; null deletes the file. */
+  content: string | null;
+  encoding?: "utf8" | "base64";
+  /** Hash of the file this change was written against (null: it didn't exist). */
+  baseHash: string | null;
+}
+
+/** Changes Claude proposes to a site's files. A person reviews and applies them. */
+export const siteChangesets = pgTable(
+  "site_changesets",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id").notNull().references(() => sites.id, { onDelete: "cascade" }),
+    summary: text("summary").notNull(),
+    changes: jsonb("changes").$type<SiteFileChange[]>().notNull(),
+    status: text("status", { enum: ["open", "applied", "dismissed"] }).notNull().default("open"),
+    authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
+    /** "mcp", "studio" or "generate". */
+    source: text("source").notNull().default("mcp"),
+    createdAt: createdAt(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [index("site_changesets_site").on(t.siteId, t.status)],
+);

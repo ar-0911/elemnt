@@ -116,6 +116,17 @@ Postgres holds everything except page bodies. Page sources and rendered HTML are
 
 `GET /healthz` returns 200 when the database answers. Where you can't run the bootstrap script, set `ELEMNT_OWNER_EMAIL`: the first start creates the workspace for that owner and prints their API token once. Ready-made targets live in [deploy/cloudflare](../../deploy/cloudflare/README.md) and [deploy/aws](../../deploy/aws/README.md). Run one instance: rate limits and render caches are in memory.
 
+## Project websites
+
+A workspace can have websites, one per project, each on its own subdomain (`<site>.<ELEMNT_SITES_DOMAIN>`) or its own hostname. A site is a set of files kept in Elemnt (`site.json`, Liquid `layouts/` and `partials/`, `pages/`, `styles/`, `scripts/`, `assets/`) around the Markdown pages of one space, shown under `/docs`. `docs.root` in `site.json` limits a site to one page and its children, so several sites can share a space.
+
+- Editors change files in the studio (Websites in the sidebar), preview on a private `<site>--<id>` address, and publish or roll back releases.
+- Claude designs over MCP (`get_site_design_guide`, `propose_site_changes`, `preview_site`, the `design_site` prompt) or from a repo (`POST /api/sites/:slug/generate`, using the workspace's Claude key). Both make change sets that a person applies; there is no publish tool over MCP.
+- Sites run their own JavaScript, so they are never served from the app's host. The session cookie is `__Host-` over HTTPS and is never sent to site hosts.
+- three.js is served from the site itself under `/_elemnt/vendor/`, with an import map, so scenes need no CDN.
+
+The full contract for designers (files, template variables, helpers) is `src/sites/guide.ts`, also served to Claude by `get_site_design_guide`.
+
 ## Widgets and the sandbox
 
 `:::widget` blocks hold an author's own HTML, CSS and JS. They never run on the app's origin. The same server answers a second hostname, `ELEMNT_SANDBOX_URL`, and on that hostname serves only `/w/*`:

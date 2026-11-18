@@ -13,6 +13,10 @@
   "routes": [
     { "pattern": "docs.example.com", "custom_domain": true },
     { "pattern": "example-usercontent.net", "custom_domain": true }
+    // Project websites (README.md, "Project websites"): every subdomain of
+    // ELEMNT_SITES_DOMAIN goes to the same Worker. Custom domains above, and on
+    // other Workers, still win over this route.
+    // { "pattern": "*.example.com/*", "zone_name": "example.com" }
   ],
   "vars": {
     "ELEMNT_PUBLIC_URL": "https://docs.example.com",
@@ -25,6 +29,8 @@
     "ELEMNT_FONTS": "google",
     "ELEMNT_S3_BUCKET": "elemnt-blobs",
     "ELEMNT_S3_REGION": "auto"
+    // Project websites live at <site>.<this domain>; uncomment with the wildcard route above.
+    // "ELEMNT_SITES_DOMAIN": "example.com"
     // ELEMNT_S3_ENDPOINT is your account's R2 endpoint; set it here or as a secret:
     // "ELEMNT_S3_ENDPOINT": "https://<account-id>.r2.cloudflarestorage.com"
   },

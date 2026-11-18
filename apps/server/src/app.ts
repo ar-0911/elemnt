@@ -45,6 +45,10 @@ import { hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
 import * as accounts from "./services/accounts.js";
 import { authPage, loginPage, signupPage } from "./render/auth.js";
 import { roles } from "./db/schema.js";
+import * as sitesSvc from "./services/sites.js";
+import { siteHost } from "./sites/host.js";
+import { registerSiteRoutes } from "./sites/routes.js";
+import { generateSite } from "./services/site-generate.js";
 
 export interface AppDeps {
   db: Db;
@@ -67,7 +71,13 @@ const REPORTS_PER_HOUR = 10;
 type Env = { Variables: { viewer: Viewer | undefined; workspaceId: string; nonce: string } };
 type Space = typeof spaces.$inferSelect;
 
-const TOKEN_COOKIE = "elemnt_token";
+/**
+ * Over HTTPS the session cookie gets the __Host- prefix: browsers then refuse
+ * it unless it's Secure, host-only and Path=/, so a project website on a
+ * sibling subdomain can't plant or shadow it (cookie tossing).
+ */
+const TOKEN_COOKIE_PLAIN = "elemnt_token";
+const TOKEN_COOKIE_HOST = "__Host-elemnt_token";
 const LI_STATE_COOKIE = "elemnt_li_state";
 
 const LINKEDIN_SYSTEM = `You write LinkedIn posts that share a documentation page or project write-up. The author will edit your draft before posting.
@@ -82,7 +92,15 @@ export function createApp(deps: AppDeps) {
   const doFetch = deps.fetch ?? fetch;
   const pageDeps = { db: deps.db, blobs: deps.blobs, elemnt };
   const secure = deps.config.publicUrl.startsWith("https://");
+  const TOKEN_COOKIE = secure ? TOKEN_COOKIE_HOST : TOKEN_COOKIE_PLAIN;
   let workspaceId: string | undefined;
+  async function currentWorkspace() {
+    if (!workspaceId) {
+      const [ws] = await deps.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, deps.config.workspaceSlug));
+      workspaceId = ws?.id;
+    }
+    return workspaceId;
+  }
 
   const app = new Hono<Env>();
   const sandboxUrl = deps.config.sandboxUrl;
@@ -93,11 +111,47 @@ export function createApp(deps: AppDeps) {
 
   // The sandbox origin is the same server under another hostname. It answers
   // only /w/*: nothing else, cookies included, is reachable from there.
+  const sitesDeps: sitesSvc.SitesDeps = {
+    db: deps.db,
+    blobs: deps.blobs,
+    elemnt,
+    publicUrl: deps.config.publicUrl,
+    ...(deps.config.sitesDomain ? { sitesDomain: deps.config.sitesDomain } : {}),
+    ...(sandboxUrl ? { sandboxUrl } : {}),
+  };
   if (sandboxUrl) {
-    const sandbox = sandboxApp({ db: deps.db, blobs: deps.blobs, publicUrl: deps.config.publicUrl });
+    const sandbox = sandboxApp({ db: deps.db, blobs: deps.blobs, publicUrl: deps.config.publicUrl, frameAncestors: () => sitesSvc.siteOrigins(sitesDeps) });
     const host = new URL(sandboxUrl).host;
     app.use(async (c, next) => (new URL(c.req.url).host === host ? sandbox.fetch(c.req.raw) : next()));
   }
+
+  // Project websites: any other hostname that names a site. The app's own
+  // host is never a site, whatever the configured sites domain.
+  const appHost = new URL(deps.config.publicUrl).host;
+  const serveSite = siteHost({ ...sitesDeps, elementsBundle: () => loadBundle() });
+  /** Read-only endpoints sites' components call (repo cards, live data), forwarded without credentials. */
+  const SITE_PASSTHROUGH = /^\/api\/(github\/[^/]+\/[^/]+(\/(tree|file))?|query)$/;
+  app.use(async (c, next) => {
+    const url = new URL(c.req.url);
+    if (url.host === appHost) return next();
+    const match = await sitesSvc.matchHost(sitesDeps, await currentWorkspace(), url.host).catch((err) => {
+      console.error("site lookup failed", err);
+      return undefined;
+    });
+    if (!match) {
+      // A name under the sites domain that isn't a (published) site: never fall through to the app.
+      const domain = deps.config.sitesDomain;
+      if (domain && url.hostname.endsWith(`.${domain}`)) return c.html(`<!doctype html><meta charset="utf-8"><title>No site here</title><body style="font:16px system-ui;text-align:center;margin:80px auto;max-width:560px"><h1>There's no website here yet</h1><p>Nothing is published at ${escapeHtml(url.hostname)}.</p></body>`, 404);
+      return next();
+    }
+    if (c.req.method === "GET" && SITE_PASSTHROUGH.test(url.pathname)) {
+      const res = await app.fetch(new Request(`${deps.config.publicUrl}${url.pathname}${url.search}`, { headers: { accept: c.req.header("accept") ?? "application/json" } }));
+      const out = new Response(res.body, res);
+      out.headers.set("Access-Control-Allow-Origin", "*");
+      return out;
+    }
+    return serveSite(c.req.raw, match);
+  });
 
   app.onError((err, c) => {
     if (err instanceof HttpError) return c.json({ error: err.message, ...err.details }, err.status);
@@ -128,10 +182,7 @@ export function createApp(deps: AppDeps) {
       const origin = c.req.header("origin");
       if (origin && origin !== appOrigin && origin !== new URL(c.req.url).origin) throw new HttpError(403, "This request came from another site, so it was refused.");
     }
-    if (!workspaceId) {
-      const [ws] = await deps.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, deps.config.workspaceSlug));
-      workspaceId = ws?.id;
-    }
+    await currentWorkspace();
     // A fresh install has no workspace until the first person signs up.
     if (!workspaceId) {
       const path = new URL(c.req.url).pathname;
@@ -1288,7 +1339,7 @@ export function createApp(deps: AppDeps) {
       c.header("WWW-Authenticate", `Bearer resource_metadata="${deps.config.publicUrl}/.well-known/oauth-protected-resource"`);
       return c.json({ error: "Connect with OAuth or send an Elemnt API token." }, 401);
     }
-    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh }, { viewer, workspaceId: c.get("workspaceId") });
+    return handleMcp(c.req.raw, { ...pageDeps, config: deps.config, github: gh, sites: sitesDeps }, { viewer, workspaceId: c.get("workspaceId") });
   });
 
   /** Landing pages wear the workspace theme; without one, Elemnt's own Aurora look. */
@@ -1419,6 +1470,21 @@ export function createApp(deps: AppDeps) {
           : {}),
       }),
     );
+  });
+
+  const siteGenerateLog = new Map<string, number[]>();
+  registerSiteRoutes(app, {
+    ...sitesDeps,
+    requireRole,
+    workspaceId: (c) => c.get("workspaceId"),
+    background,
+    async generate(c, site, input, viewer) {
+      const ai = await aiFor(c.get("workspaceId"));
+      if (!ai) throw new HttpError(400, "Designing a site needs Claude. An admin can add an Anthropic API key in Settings, or use Claude Code with the Elemnt connector (prompt: design_site).");
+      limit(siteGenerateLog, c.get("workspaceId"), 10, "This workspace has designed 10 sites in the last hour. Try again later.");
+      const repo = input.repo ? normalizeRepo(input.repo) : undefined;
+      return () => generateSite({ ...pageDeps, sites: sitesDeps }, gh, ai, { site, userId: viewer.userId, ...(repo ? { repo } : {}), ...(input.brief ? { brief: input.brief } : {}) });
+    },
   });
 
   return app;
