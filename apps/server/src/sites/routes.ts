@@ -139,6 +139,11 @@ export function registerSiteRoutes(app: Hono<AnyEnv>, deps: SiteRouteDeps) {
     return c.json({ ...sitesSvc.describe(deps, row), files: await sitesSvc.listFiles(deps, row) });
   });
 
+  app.post("/api/sites/:slug/changesets/:id/preview", async (c) => {
+    const viewer = deps.requireRole(c, "editor");
+    return c.json(await sitesSvc.previewChangeset(deps, await site(c), c.req.param("id"), viewer.userId));
+  });
+
   app.post("/api/sites/:slug/changesets/:id/dismiss", async (c) => {
     deps.requireRole(c, "editor");
     await sitesSvc.dismissChangeset(deps, await site(c), c.req.param("id"));
