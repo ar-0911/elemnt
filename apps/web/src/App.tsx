@@ -7,6 +7,7 @@ import { Palette } from "./Palette";
 import { Settings, type SettingsTab } from "./Settings";
 import { siteNavigate, SitesHome } from "./SiteStudio";
 import { SpaceMembersDialog } from "./SpaceMembers";
+import { DeleteSpaceDialog, MovePageDialog } from "./SpaceActions";
 import { navigate, useRoute } from "./router";
 import { withStyle } from "./look";
 import { restartTour, Tour } from "./Tour";
@@ -329,7 +330,7 @@ function Shell() {
   const [pages, setPages] = useState<TreePage[]>([]);
   const [palette, setPalette] = useState(false);
   const [settings, setSettings] = useState<SettingsTab | false>(false);
-  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys" | "access">();
+  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys" | "access" | "move" | "delete-space">();
 
   useEffect(() => {
     getMe()
@@ -388,6 +389,8 @@ function Shell() {
     navigate(slug);
     toast(`Created ${name}.`);
   }
+
+  const reloadSpaces = useCallback(async () => setSpaces(await api.get<Space[]>("/api/spaces")), []);
 
   async function signOut() {
     await fetch("/logout", { method: "POST", credentials: "same-origin" });
@@ -461,11 +464,21 @@ function Shell() {
           <nav className="side-section grow" aria-label={`Pages in ${space?.name ?? route.space}`}>
             <div className="side-label">
               Pages
+              <span className="side-actions">
               {space?.visibility === "private" && me?.role === "owner" && (
                 <button type="button" className="icon-btn small" aria-label="Who can read this space" title="Who can read this space" onClick={() => setDialog("access")}>
                   <Icon name="team" size={14} />
                 </button>
               )}
+              {space && me?.role === "owner" && (
+                <Menu
+                  label={`${space.name} options`}
+                  align="end"
+                  trigger={<Icon name="more" size={14} />}
+                  items={[{ label: "Delete space…", icon: "trash", danger: true, onSelect: () => setDialog("delete-space") }]}
+                />
+              )}
+              </span>
             </div>
             <Tree pages={pages} space={route.space} current={route.path} />
           </nav>
@@ -498,13 +511,13 @@ function Shell() {
       {onSites ? (
         <SitesHome canEdit={canEdit} spaces={spaces} slug={route.path} />
       ) : current ? (
-        <PageEditor key={current.id} pageId={current.id} canEdit={canEdit} space={space} onChanged={loadTree} />
+        <PageEditor key={current.id} pageId={current.id} canEdit={canEdit} space={space} onChanged={loadTree} onMove={() => setDialog("move")} />
       ) : (
         <Home me={me} space={space} spaces={spaces} pages={pages} canEdit={canEdit} canAdmin={canAdmin} onNewPage={() => setDialog("page")} onExplain={() => setDialog("explain")} onNewSpace={() => setDialog("space")} onSettings={(tab) => setSettings((tab as SettingsTab) ?? "account")} />
       )}
 
       {current && <Tour />}
-      {settings && me && <Settings me={me} canAdmin={canAdmin} tab={settings} onTab={setSettings} onClose={() => setSettings(false)} onMe={setMe} />}
+      {settings && me && <Settings me={me} canAdmin={canAdmin} tab={settings} onTab={setSettings} onClose={() => setSettings(false)} onMe={setMe} onSpacesChanged={() => void reloadSpaces()} />}
       {(dialog === "page" || dialog === "explain") && space && (
         <NewPageDialog
           space={space}
@@ -523,6 +536,34 @@ function Shell() {
       {dialog === "space" && <NewSpaceDialog onClose={() => setDialog(undefined)} onCreate={createSpace} />}
       {dialog === "keys" && <ShortcutsDialog onClose={() => setDialog(undefined)} />}
       {dialog === "access" && space && <SpaceMembersDialog space={space} onClose={() => setDialog(undefined)} />}
+      {dialog === "move" && space && current && (
+        <MovePageDialog
+          page={current}
+          space={space}
+          spaces={spaces}
+          onClose={() => setDialog(undefined)}
+          onMoved={(s, p) => {
+            setDialog(undefined);
+            if (s === route.space) loadTree();
+            navigate(s, p);
+          }}
+        />
+      )}
+      {dialog === "delete-space" && space && (
+        <DeleteSpaceDialog
+          space={space}
+          spaces={spaces}
+          onClose={() => setDialog(undefined)}
+          onDeleted={() => {
+            setDialog(undefined);
+            void reloadSpaces().then(() => {
+              const next = spaces.find((s) => s.slug !== space.slug);
+              if (next) navigate(next.slug);
+              else location.assign("/app/");
+            });
+          }}
+        />
+      )}
       {palette && route.space && (
         <Palette
           space={route.space}

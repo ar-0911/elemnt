@@ -5,6 +5,7 @@ import { checklistFlag } from "./Home";
 import type { OrgTheme, PageStyle } from "@elemnt/core";
 import { api, ApiError, refreshMe, type AiStatus, type Me } from "./api";
 import { StyleForm } from "./StyleForm";
+import { TrashSection } from "./SpaceActions";
 
 interface WidgetSettings {
   verified: boolean;
@@ -196,9 +197,9 @@ function MyStyleSection() {
   );
 }
 
-export type SettingsTab = "account" | "style" | "connect" | "people" | "claude" | "theme" | "widgets" | "ask";
+export type SettingsTab = "account" | "style" | "connect" | "people" | "claude" | "theme" | "widgets" | "ask" | "trash";
 
-const TABS: { id: SettingsTab; label: string; icon: IconName; admin?: boolean; group: string }[] = [
+const TABS: { id: SettingsTab; label: string; icon: IconName; admin?: boolean; owner?: boolean; group: string }[] = [
   { id: "account", label: "Account", icon: "user", group: "You" },
   { id: "style", label: "My style", icon: "palette", group: "You" },
   { id: "connect", label: "Connect Claude", icon: "plug", group: "You" },
@@ -207,11 +208,12 @@ const TABS: { id: SettingsTab; label: string; icon: IconName; admin?: boolean; g
   { id: "theme", label: "Organization theme", icon: "palette", admin: true, group: "Workspace" },
   { id: "ask", label: "Ask the page", icon: "chat", admin: true, group: "Workspace" },
   { id: "widgets", label: "Widgets", icon: "shield", admin: true, group: "Workspace" },
+  { id: "trash", label: "Trash", icon: "trash", admin: true, owner: true, group: "Workspace" },
 ];
 
 /** Settings, one topic per tab: you first, then the workspace (admins). */
-export function Settings({ me, canAdmin, tab, onTab, onClose, onMe }: { me: Me; canAdmin: boolean; tab: SettingsTab; onTab(t: SettingsTab): void; onClose(): void; onMe(m: Me): void }) {
-  const tabs = TABS.filter((t) => !t.admin || canAdmin);
+export function Settings({ me, canAdmin, tab, onTab, onClose, onMe, onSpacesChanged }: { me: Me; canAdmin: boolean; tab: SettingsTab; onTab(t: SettingsTab): void; onClose(): void; onMe(m: Me): void; onSpacesChanged?(): void }) {
+  const tabs = TABS.filter((t) => (!t.admin || canAdmin) && (!t.owner || me.role === "owner"));
   const currentTab = tabs.some((t) => t.id === tab) ? tab : "account";
   return (
     <Dialog title="Settings" onClose={onClose} wide>
@@ -242,6 +244,7 @@ export function Settings({ me, canAdmin, tab, onTab, onClose, onMe }: { me: Me; 
           {currentTab === "theme" && <ThemeSection />}
           {currentTab === "ask" && <AskSection />}
           {currentTab === "widgets" && <WidgetsSection />}
+          {currentTab === "trash" && <TrashSection {...(onSpacesChanged ? { onRestored: onSpacesChanged } : {})} />}
         </div>
       </div>
     </Dialog>

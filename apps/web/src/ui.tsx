@@ -32,6 +32,10 @@ const PATHS = {
   shield: "M12 3l8 3v6c0 5-3.4 8.3-8 9-4.6-.7-8-4-8-9V6z",
   plug: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4",
   chat: "M21 12a8 8 0 0 1-11.7 7.1L4 20.5l1.4-5A8 8 0 1 1 21 12z",
+  move: "M4 7h11l-3-3M15 7l-3 3M20 17H9l3 3M9 17l3-3",
+  trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3",
+  more: "M4 12a1.6 1.6 0 1 0 3.2 0 1.6 1.6 0 1 0-3.2 0M10.4 12a1.6 1.6 0 1 0 3.2 0 1.6 1.6 0 1 0-3.2 0M16.8 12a1.6 1.6 0 1 0 3.2 0 1.6 1.6 0 1 0-3.2 0",
+  undo: "M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
 } as const;
 
 export type IconName = keyof typeof PATHS;

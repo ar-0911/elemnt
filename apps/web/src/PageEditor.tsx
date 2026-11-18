@@ -30,6 +30,8 @@ interface Props {
   canEdit: boolean;
   space: Space | undefined;
   onChanged(): void;
+  /** Opens the Move dialog for this page. */
+  onMove?(): void;
 }
 
 const PANELS: { id: Exclude<Panel, "none">; label: string; icon: IconName; hint: string }[] = [
@@ -41,7 +43,7 @@ const PANELS: { id: Exclude<Panel, "none">; label: string; icon: IconName; hint:
   { id: "repo", label: "Repo", icon: "repo", hint: "Link this page to a GitHub repo and catch drift" },
 ];
 
-export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
+export function PageEditor({ pageId, canEdit, space, onChanged, onMove }: Props) {
   const toast = useToast();
   const [opened, setOpened] = useState<OpenedPage>();
   const [source, setSource] = useState("");
@@ -241,6 +243,11 @@ export function PageEditor({ pageId, canEdit, space, onChanged }: Props) {
             <a className="btn ghost" href={opened.url} target="_blank" rel="noreferrer" title="Open the published page in a new tab">
               <Icon name="external" size={16} /> View
             </a>
+          )}
+          {canEdit && onMove && (
+            <button type="button" className="btn ghost" onClick={onMove} title="Move this page, and the pages under it, to another space or parent">
+              <Icon name="move" size={16} /> Move
+            </button>
           )}
           {canEdit && (
             <button type="button" className="btn" data-tour="ask" disabled={readOnly} onClick={openAssist} title="Ask Claude to write or rewrite (⌘I)">

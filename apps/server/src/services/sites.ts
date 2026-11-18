@@ -1,6 +1,6 @@
 import type { Elemnt } from "@elemnt/core";
 import { randomBytes } from "node:crypto";
-import { and, count, desc, eq, isNotNull, max, ne } from "drizzle-orm";
+import { and, count, desc, eq, isNotNull, isNull, max, ne } from "drizzle-orm";
 import type { Db } from "../db/index.js";
 import { pages, siteChangesets, siteReleases, sites, spaces, type SiteFileChange } from "../db/schema.js";
 import type { BlobStore } from "../lib/blobs.js";
@@ -96,7 +96,7 @@ export async function createSite(
   if (await findSite(deps.db, workspaceId, input.slug)) throw new HttpError(409, `A site called "${input.slug}" already exists.`);
   let spaceId: string | null = null;
   if (input.spaceSlug) {
-    const [space] = await deps.db.select().from(spaces).where(and(eq(spaces.workspaceId, workspaceId), eq(spaces.slug, input.spaceSlug)));
+    const [space] = await deps.db.select().from(spaces).where(and(eq(spaces.workspaceId, workspaceId), eq(spaces.slug, input.spaceSlug), isNull(spaces.deletedAt)));
     if (!space) throw new HttpError(404, `No space "${input.spaceSlug}" to use for the site's docs.`);
     if (space.visibility === "private") throw new HttpError(400, PRIVATE_DOCS);
     spaceId = space.id;
@@ -122,7 +122,7 @@ export async function updateSite(deps: SitesDeps, site: Site, input: { name?: st
   if (input.spaceSlug !== undefined) {
     if (input.spaceSlug === null) patch.spaceId = null;
     else {
-      const [space] = await deps.db.select().from(spaces).where(and(eq(spaces.workspaceId, site.workspaceId), eq(spaces.slug, input.spaceSlug)));
+      const [space] = await deps.db.select().from(spaces).where(and(eq(spaces.workspaceId, site.workspaceId), eq(spaces.slug, input.spaceSlug), isNull(spaces.deletedAt)));
       if (!space) throw new HttpError(404, `No space "${input.spaceSlug}".`);
       if (space.visibility === "private") throw new HttpError(400, PRIVATE_DOCS);
       patch.spaceId = space.id;
@@ -259,7 +259,7 @@ async function docsFor(db: Db, spaceId: string | null): Promise<DocPage[]> {
     .select({ id: pages.id, path: pages.path, title: pages.title, summary: pages.summary, position: pages.position, revisionId: pages.publishedRevisionId, updatedAt: pages.updatedAt })
     .from(pages)
     .innerJoin(spaces, eq(spaces.id, pages.spaceId))
-    .where(and(eq(pages.spaceId, spaceId), isNotNull(pages.publishedRevisionId), ne(spaces.visibility, "private")));
+    .where(and(eq(pages.spaceId, spaceId), isNotNull(pages.publishedRevisionId), ne(spaces.visibility, "private"), isNull(spaces.deletedAt)));
   return rows.map((r) => ({ ...r, revisionId: r.revisionId!, updatedAt: new Date(r.updatedAt) }));
 }
 

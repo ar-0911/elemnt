@@ -37,6 +37,7 @@ export const api = {
   put: <T>(path: string, body: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   del: <T = void>(path: string, init?: RequestInit) => request<T>("DELETE", path, undefined, init),
+  delJson: <T = void>(path: string, body: unknown) => request<T>("DELETE", path, body),
 };
 
 export interface Me {

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { slugify } from "@elemnt/core";
 import { pageQuestions, spaces, type Visibility } from "../db/schema.js";
 import { newId } from "../lib/ids.js";
@@ -173,6 +173,6 @@ export async function groundingSpaces(
   reader: { isMember: boolean; canRead(space: { id: string; visibility: Visibility }): boolean },
 ) {
   if (!reader.isMember) return [pageSpaceId];
-  const all = await deps.db.select({ id: spaces.id, visibility: spaces.visibility }).from(spaces).where(eq(spaces.workspaceId, workspaceId));
+  const all = await deps.db.select({ id: spaces.id, visibility: spaces.visibility }).from(spaces).where(and(eq(spaces.workspaceId, workspaceId), isNull(spaces.deletedAt)));
   return all.filter((s) => s.id === pageSpaceId || reader.canRead(s)).map((s) => s.id);
 }
