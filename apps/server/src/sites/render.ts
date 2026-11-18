@@ -191,7 +191,8 @@ export interface NavNode {
 }
 
 function docsTree(config: SiteConfig, docs: DocPage[], current?: string): NavNode[] {
-  const sorted = [...docs].sort((a, b) => a.position - b.position || a.path.localeCompare(b.path));
+  // The docs home comes first, then the space's order.
+  const sorted = [...docs].sort((a, b) => Number(b.path === "index") - Number(a.path === "index") || a.position - b.position || a.path.localeCompare(b.path));
   const byPath = new Map<string, NavNode>();
   const roots: NavNode[] = [];
   for (const p of sorted.sort((a, b) => a.path.split("/").length - b.path.split("/").length)) {

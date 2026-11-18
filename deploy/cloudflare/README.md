@@ -53,6 +53,18 @@ ELEMNT_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com \
 ELEMNT_S3_ACCESS_KEY_ID=… ELEMNT_S3_SECRET_ACCESS_KEY=… node dist/seed-demo.js
 ```
 
+## Project websites
+
+Each project site lives at `<site>.<ELEMNT_SITES_DOMAIN>`, for example `braid.example.com`, served by the same Worker and container. To turn them on:
+
+1. **DNS.** In the zone's DNS settings, add a proxied (orange cloud) record named `*`, for example `AAAA * 100::`. Explicit records such as `docs` or another Worker's custom domain keep working: they always win over the wildcard.
+2. **Route and setting.** In `wrangler.jsonc`, uncomment the `*.example.com/*` route and `ELEMNT_SITES_DOMAIN`, with your domain in both. Then `npx wrangler deploy`.
+3. **Sign in again.** Over HTTPS the session cookie is now `__Host-elemnt_token`, so sibling subdomains can't overwrite it. Everyone signs in once after this deploy.
+
+Cloudflare's free certificate covers one level of subdomain, so `braid.example.com` works but `docs.braid.example.com` would need an advanced certificate. A site can also have its own hostname (Websites → the site → Settings); point that hostname at the Worker as a custom domain.
+
+Previews use `<site>--<16 hex>.<domain>` addresses, which the same wildcard covers. They send `noindex` and `no-store`.
+
 ## How it runs
 
 - `src/index.ts` sends every request, for both hostnames, to one container named `main`. The server tells the two origins apart by `Host`, the same as behind any reverse proxy.
