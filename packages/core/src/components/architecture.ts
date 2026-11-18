@@ -145,20 +145,33 @@ function wrap(text: string, max = 20): string[] {
 
 interface Placed { item: ArchItem; box: Box; lines?: string[]; children?: Placed[] }
 
-function measure(item: ArchItem, parentDir: Dir): Placed {
+/** Every service id inside an item. */
+function idsIn(item: ArchItem, out = new Set<string>()): Set<string> {
+  if (item.type === "node") out.add(item.id);
+  else item.items.forEach((c) => idsIn(c, out));
+  return out;
+}
+
+/** How wide the gap between two neighbours must be so a labelled link between them has room. */
+type GapNeed = (a: ArchItem, b: ArchItem) => number;
+
+function measure(item: ArchItem, parentDir: Dir, need: GapNeed): Placed {
   if (item.type === "node") {
     const lines = wrap(item.label);
     const w = Math.max(128, ...lines.map((l) => l.length * CH + 26), (item.sub?.length ?? 0) * 6.2 + 22);
     return { item, lines, box: { x: 0, y: 0, w, h: NODE_H + (lines.length > 1 ? 15 : 0) + (item.sub ? 4 : 0) } };
   }
   const dir: Dir = item.dir ?? (parentDir === "right" ? "down" : "right");
-  const kids = item.items.map((c) => measure(c, dir));
+  const kids = item.items.map((c) => measure(c, dir, need));
+  // Side by side, a labelled link needs a gap as wide as its label.
+  const gaps = kids.slice(1).map((k, i) => (dir === "right" ? Math.max(GAP, need(kids[i]!.item, k.item)) : GAP));
+  const gapSum = gaps.reduce((a, g) => a + g, 0);
   let w = 0, h = 0;
   if (dir === "right") {
-    w = kids.reduce((a, k) => a + k.box.w, 0) + GAP * Math.max(0, kids.length - 1);
+    w = kids.reduce((a, k) => a + k.box.w, 0) + gapSum;
     h = Math.max(0, ...kids.map((k) => k.box.h));
   } else {
-    h = kids.reduce((a, k) => a + k.box.h, 0) + GAP * Math.max(0, kids.length - 1);
+    h = kids.reduce((a, k) => a + k.box.h, 0) + gapSum;
     w = Math.max(0, ...kids.map((k) => k.box.w));
   }
   w = Math.max(w + PAD * 2, item.label.length * 6.6 + 40, 160);
@@ -166,15 +179,16 @@ function measure(item: ArchItem, parentDir: Dir): Placed {
   // Lay children out inside, centred on the cross axis.
   let cx = PAD, cy = HEAD + PAD;
   const innerW = w - PAD * 2, innerH = h - PAD * 2 - HEAD;
-  for (const k of kids) {
+  kids.forEach((k, i) => {
+    const g = gaps[i] ?? 0;
     if (dir === "right") {
-      k.box.x = cx; k.box.y = cy + (innerH - k.box.h) / 2; cx += k.box.w + GAP;
+      k.box.x = cx; k.box.y = cy + (innerH - k.box.h) / 2; cx += k.box.w + g;
     } else {
-      k.box.y = cy; k.box.x = cx + (innerW - k.box.w) / 2; cy += k.box.h + GAP;
+      k.box.y = cy; k.box.x = cx + (innerW - k.box.w) / 2; cy += k.box.h + g;
     }
-  }
+  });
   if (dir === "right") {
-    const used = kids.reduce((a, k) => a + k.box.w, 0) + GAP * Math.max(0, kids.length - 1);
+    const used = kids.reduce((a, k) => a + k.box.w, 0) + gapSum;
     const shift = (innerW - used) / 2;
     for (const k of kids) k.box.x += shift;
   }
@@ -183,7 +197,14 @@ function measure(item: ArchItem, parentDir: Dir): Placed {
 
 function layoutArch(spec: ArchSpec): { placed: Placed[]; w: number; h: number; boxes: Map<string, Box> } {
   const top: ArchZone = { type: "zone", id: "", kind: "group", label: "", dir: spec.dir, items: spec.items, line: 0 };
-  const root = measure(top, spec.dir === "right" ? "down" : "right");
+  const labelled = spec.links.filter((l) => l.label).map((l) => ({ from: l.from, to: l.to, w: l.label!.length * 6.2 + 14 + 36 }));
+  const need: GapNeed = (a, b) => {
+    const ia = idsIn(a), ib = idsIn(b);
+    let w = 0;
+    for (const l of labelled) if ((ia.has(l.from) && ib.has(l.to)) || (ia.has(l.to) && ib.has(l.from))) w = Math.max(w, l.w);
+    return w;
+  };
+  const root = measure(top, spec.dir === "right" ? "down" : "right", need);
   // The invisible root needs no header or padding.
   const offX = -PAD + 8, offY = -(HEAD + PAD) + 8;
   const boxes = new Map<string, Box>();
@@ -241,16 +262,9 @@ const num = (v: number) => Math.round(v * 10) / 10;
 
 type Side = "l" | "r" | "t" | "b";
 
-/** Which sides a link leaves and enters by: horizontal when the boxes sit side by side. */
-function sides(a: Box, b: Box): [Side, Side] {
-  const gapX = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
-  const gapY = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h));
-  const horizontal = gapX > 16 || gapX >= gapY;
-  if (horizontal) return b.x + b.w / 2 >= a.x + a.w / 2 ? ["r", "l"] : ["l", "r"];
-  return b.y + b.h / 2 >= a.y + a.h / 2 ? ["b", "t"] : ["t", "b"];
-}
+type Pt = [number, number];
 
-function port(box: Box, side: Side, offset: number): [number, number] {
+function port(box: Box, side: Side, offset: number): Pt {
   const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
   if (side === "l") return [box.x, cy + offset];
   if (side === "r") return [box.x + box.w, cy + offset];
@@ -258,25 +272,107 @@ function port(box: Box, side: Side, offset: number): [number, number] {
   return [cx + offset, box.y + box.h];
 }
 
-function route(p0: [number, number], s0: Side, p1: [number, number], lane: number): { d: string; pts: [number, number][] } {
-  const horizontal = s0 === "l" || s0 === "r";
-  if (horizontal) {
-    if (Math.abs(p0[1] - p1[1]) < 4) return { d: `M${num(p0[0])} ${num(p0[1])}H${num(p1[0])}`, pts: [p0, [p1[0], p0[1]]] };
-    const mx = (p0[0] + p1[0]) / 2 + lane;
-    return { d: `M${num(p0[0])} ${num(p0[1])}H${num(mx)}V${num(p1[1])}H${num(p1[0])}`, pts: [p0, [mx, p0[1]], [mx, p1[1]], p1] };
+const SIDE_PAIRS: [Side, Side][] = [
+  ["r", "l"], ["l", "r"], ["b", "t"], ["t", "b"],
+  ["r", "t"], ["r", "b"], ["l", "t"], ["l", "b"], ["b", "l"], ["b", "r"], ["t", "l"], ["t", "r"],
+];
+const isH = (side: Side) => side === "l" || side === "r";
+const dirOf = (side: Side): Pt => (side === "l" ? [-1, 0] : side === "r" ? [1, 0] : side === "t" ? [0, -1] : [0, 1]);
+
+/** Orthogonal routes from p0 (leaving by s0) to p1 (entering by s1): straight, L, or Z with the bend at several places. */
+function candidates(p0: Pt, s0: Side, p1: Pt, s1: Side): Pt[][] {
+  const out: Pt[][] = [];
+  const [dx0, dy0] = dirOf(s0), [dx1, dy1] = dirOf(s1);
+  const M = 12;
+  // The link must leave toward the target and arrive moving into it.
+  if (isH(s0) && isH(s1)) {
+    if (dx0 !== -dx1 || (p1[0] - p0[0]) * dx0 < 2 * M) return out;
+    if (Math.abs(p0[1] - p1[1]) < 3) return [[p0, [p1[0], p0[1]]]];
+    const lo = Math.min(p0[0], p1[0]) + M, hi = Math.max(p0[0], p1[0]) - M, mid = (p0[0] + p1[0]) / 2;
+    for (const k of [0, 1, -1, 2, -2, 3, -3, 5, -5, 8, -8, 12, -12, 18, -18]) {
+      const mx = mid + k * 10;
+      if (mx >= lo && mx <= hi) out.push([p0, [mx, p0[1]], [mx, p1[1]], p1]);
+    }
+    return out;
   }
-  if (Math.abs(p0[0] - p1[0]) < 4) return { d: `M${num(p0[0])} ${num(p0[1])}V${num(p1[1])}`, pts: [p0, [p0[0], p1[1]]] };
-  const my = (p0[1] + p1[1]) / 2 + lane;
-  return { d: `M${num(p0[0])} ${num(p0[1])}V${num(my)}H${num(p1[0])}V${num(p1[1])}`, pts: [p0, [p0[0], my], [p1[0], my], p1] };
+  if (!isH(s0) && !isH(s1)) {
+    if (dy0 !== -dy1 || (p1[1] - p0[1]) * dy0 < 2 * M) return out;
+    if (Math.abs(p0[0] - p1[0]) < 3) return [[p0, [p0[0], p1[1]]]];
+    const lo = Math.min(p0[1], p1[1]) + M, hi = Math.max(p0[1], p1[1]) - M, mid = (p0[1] + p1[1]) / 2;
+    for (const k of [0, 1, -1, 2, -2, 3, -3, 5, -5, 8, -8, 12, -12, 18, -18]) {
+      const my = mid + k * 10;
+      if (my >= lo && my <= hi) out.push([p0, [p0[0], my], [p1[0], my], p1]);
+    }
+    return out;
+  }
+  // L shape: one bend at the corner.
+  const corner: Pt = isH(s0) ? [p1[0], p0[1]] : [p0[0], p1[1]];
+  const ok0 = (corner[0] - p0[0]) * dx0 + (corner[1] - p0[1]) * dy0 >= M;
+  const ok1 = (p1[0] - corner[0]) * -dx1 + (p1[1] - corner[1]) * -dy1 >= M;
+  if (ok0 && ok1) out.push([p0, corner, p1]);
+  return out;
 }
 
-/** The middle of the longest segment: where a label reads best. */
-function labelSpot(pts: [number, number][]): [number, number] {
-  let best = 0, at: [number, number] = pts[0]!;
+function segHitsBox(a: Pt, b: Pt, r: Box, pad: number): boolean {
+  const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+  return x1 > r.x - pad && x0 < r.x + r.w + pad && y1 > r.y - pad && y0 < r.y + r.h + pad;
+}
+
+interface Obstacles { nodes: Box[]; tabs: Box[]; segs: [Pt, Pt][] }
+
+function shrink(b: Box, by: number): Box {
+  return { x: b.x + by, y: b.y + by, w: b.w - by * 2, h: b.h - by * 2 };
+}
+
+/** Lower is better: crossing a card is never worth it, zone tabs and other links are avoided, then shorter with fewer bends. */
+function score(pts: Pt[], a: Box, b: Box, obs: Obstacles): number {
+  let n = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const p = pts[i - 1]!, q = pts[i]!;
+    for (const box of obs.nodes) {
+      if (box === a || box === b) { if (segHitsBox(p, q, shrink(box, 2), 0)) n += 1000; }
+      else if (segHitsBox(p, q, box, 6)) n += 1000;
+    }
+    for (const t of obs.tabs) if (segHitsBox(p, q, t, 2)) n += 120;
+    for (const [u, v] of obs.segs) {
+      const horiz = p[1] === q[1], uh = u[1] === v[1];
+      if (horiz !== uh) continue;
+      if (horiz ? Math.abs(p[1] - u[1]) > 5 : Math.abs(p[0] - u[0]) > 5) continue;
+      const [s0, s1] = horiz ? [Math.min(p[0], q[0]), Math.max(p[0], q[0])] : [Math.min(p[1], q[1]), Math.max(p[1], q[1])];
+      const [t0, t1] = horiz ? [Math.min(u[0], v[0]), Math.max(u[0], v[0])] : [Math.min(u[1], v[1]), Math.max(u[1], v[1])];
+      if (Math.min(s1, t1) - Math.max(s0, t0) > 6) n += 90;
+    }
+  }
+  return n + pathLength(pts) + (pts.length - 2) * 28;
+}
+
+function bestRoute(a: Box, b: Box, obs: Obstacles, pairs: [Side, Side][], off: [number, number]): { pts: Pt[]; sides: [Side, Side]; cost: number } | undefined {
+  let best: { pts: Pt[]; sides: [Side, Side]; cost: number } | undefined;
+  for (const [s0, s1] of pairs) {
+    for (const pts of candidates(port(a, s0, off[0]), s0, port(b, s1, off[1]), s1)) {
+      const cost = score(pts, a, b, obs);
+      if (!best || cost < best.cost) best = { pts, sides: [s0, s1], cost };
+    }
+  }
+  return best;
+}
+
+const pathD = (pts: Pt[]) => pts.map((p, i) => `${i ? "L" : "M"}${num(p[0])} ${num(p[1])}`).join("");
+
+/** Where a label reads best: on a long stretch, clear of cards, zone tabs and other labels. */
+function labelSpot(pts: Pt[], tw: number, obs: Obstacles, placed: Box[]): Pt {
+  let best = Infinity, at: Pt = pts[0]!;
   for (let i = 1; i < pts.length; i++) {
     const [x0, y0] = pts[i - 1]!, [x1, y1] = pts[i]!;
     const len = Math.abs(x1 - x0) * 1.6 + Math.abs(y1 - y0);
-    if (len > best) { best = len; at = [(x0 + x1) / 2, (y0 + y1) / 2]; }
+    for (const f of [0.5, 0.3, 0.7, 0.2, 0.8]) {
+      const c: Pt = [x0 + (x1 - x0) * f, y0 + (y1 - y0) * f];
+      const r: Box = { x: c[0] - tw / 2, y: c[1] - 10, w: tw, h: 20 };
+      const hit = (bx: Box) => r.x < bx.x + bx.w && r.x + r.w > bx.x && r.y < bx.y + bx.h && r.y + r.h > bx.y;
+      let cost = -len + Math.abs(f - 0.5) * 40;
+      cost += obs.nodes.filter(hit).length * 2000 + obs.tabs.filter(hit).length * 300 + placed.filter(hit).length * 1500;
+      if (cost < best) { best = cost; at = c; }
+    }
   }
   return at;
 }
@@ -289,7 +385,7 @@ function arrowHead(from: [number, number], to: [number, number]): string {
   return `${num(to[0])},${num(to[1])} ${num(bx + px)},${num(by + py)} ${num(bx - px)},${num(by - py)}`;
 }
 
-function pathLength(pts: [number, number][]): number {
+function pathLength(pts: Pt[]): number {
   let n = 0;
   for (let i = 1; i < pts.length; i++) n += Math.abs(pts[i]![0] - pts[i - 1]![0]) + Math.abs(pts[i]![1] - pts[i - 1]![1]);
   return n;
@@ -330,12 +426,24 @@ export function renderArch(spec: ArchSpec, title: string): Element {
   const zones: Element[] = [], nodes: Element[] = [], links: Element[] = [], labels: Element[] = [];
   placed.forEach((p) => (p.item.type === "zone" ? drawZone(p, zones) : null));
   placed.forEach((p) => drawNodes(p, nodes));
-  // Work out each link's sides, then spread links that share a side so they don't overlap.
+  // Obstacles: every card, and the label tab of every zone.
+  const obs: Obstacles = { nodes: [], tabs: [], segs: [] };
+  const collect = (p: Placed) => {
+    if (p.item.type === "zone") {
+      obs.tabs.push({ x: p.box.x, y: p.box.y, w: Math.min(p.box.w, p.item.label.length * 6.6 + 26), h: 24 });
+      p.children?.forEach(collect);
+    } else obs.nodes.push(p.box);
+  };
+  placed.forEach(collect);
+  // Pass 1: the best sides for each link on its own. Then spread links that share a side so they don't overlap.
   const plans = spec.links.map((l) => {
     const a = boxes.get(l.from), b = boxes.get(l.to);
-    return a && b ? { l, a, b, sides: sides(a, b), off: [0, 0] as [number, number] } : undefined;
+    if (!a || !b) return undefined;
+    const first = bestRoute(a, b, { ...obs, segs: [] }, SIDE_PAIRS, [0, 0]);
+    return first ? { l, a, b, sides: first.sides, off: [0, 0] as [number, number] } : undefined;
   });
-  const bySide = new Map<string, { plan: NonNullable<(typeof plans)[number]>; end: 0 | 1 }[]>();
+  type Plan = NonNullable<(typeof plans)[number]>;
+  const bySide = new Map<string, { plan: Plan; end: 0 | 1 }[]>();
   for (const plan of plans) {
     if (!plan) continue;
     ([0, 1] as const).forEach((end) => {
@@ -346,7 +454,7 @@ export function renderArch(spec: ArchSpec, title: string): Element {
   for (const [key, list] of bySide) {
     const side = key.slice(key.lastIndexOf(":") + 1);
     const along = side === "l" || side === "r" ? "y" : "x";
-    const other = (e: { plan: NonNullable<(typeof plans)[number]>; end: 0 | 1 }) => {
+    const other = (e: { plan: Plan; end: 0 | 1 }) => {
       const o = e.end ? e.plan.a : e.plan.b;
       return along === "y" ? o.y + o.h / 2 : o.x + o.w / 2;
     };
@@ -356,28 +464,33 @@ export function renderArch(spec: ArchSpec, title: string): Element {
     const step = list.length > 1 ? Math.min(18, span / (list.length - 1)) : 0;
     list.forEach((e, k) => (e.plan.off[e.end] = (k - (list.length - 1) / 2) * step));
   }
-  let lane = 0;
+  // Pass 2: route for real, steering clear of links already drawn.
+  const labelBoxes: Box[] = [];
   plans.forEach((plan, i) => {
     if (!plan) return;
     const { l, a, b } = plan;
-    const p0 = port(a, plan.sides[0], plan.off[0]), p1 = port(b, plan.sides[1], plan.off[1]);
-    const r = route(p0, plan.sides[0], p1, ((lane++ % 3) - 1) * 8);
-    const last = r.pts.length - 1;
-    const len = pathLength(r.pts);
+    const r = bestRoute(a, b, obs, [plan.sides], plan.off) ?? bestRoute(a, b, obs, SIDE_PAIRS, [0, 0]);
+    if (!r) return;
+    const pts = r.pts;
+    for (let k = 1; k < pts.length; k++) obs.segs.push([pts[k - 1]!, pts[k]!]);
+    const d = pathD(pts);
+    const last = pts.length - 1;
+    const len = pathLength(pts);
     const cls = ["ea-link", `ea-l-${l.style}`];
     const dur = Math.max(1.6, len / 90);
     links.push(s("g", { className: cls }, [
-      ...(l.style === "tunnel" ? [s("path", { className: ["ea-tube"], d: r.d })] : []),
-      s("path", { className: ["ea-wire"], d: r.d }),
-      s("polygon", { className: ["ea-head"], points: arrowHead(r.pts[last - 1]!, r.pts[last]!) }),
-      ...(l.both ? [s("polygon", { className: ["ea-head"], points: arrowHead(r.pts[1]!, r.pts[0]!) })] : []),
+      ...(l.style === "tunnel" ? [s("path", { className: ["ea-tube"], d })] : []),
+      s("path", { className: ["ea-wire"], d }),
+      s("polygon", { className: ["ea-head"], points: arrowHead(pts[last - 1]!, pts[last]!) }),
+      ...(l.both ? [s("polygon", { className: ["ea-head"], points: arrowHead(pts[1]!, pts[0]!) })] : []),
       s("circle", { className: ["ea-packet"], r: l.style === "tunnel" ? 4 : 3 }, [
-        s("animateMotion", { path: r.d, dur: `${num(dur)}s`, begin: `-${num(((i * 0.37) % 1) * dur)}s`, repeatCount: "indefinite" }),
+        s("animateMotion", { path: d, dur: `${num(dur)}s`, begin: `-${num(((i * 0.37) % 1) * dur)}s`, repeatCount: "indefinite" }),
       ]),
     ]));
     if (l.label) {
-      const at = labelSpot(r.pts);
       const tw = l.label.length * 6.2 + 14;
+      const at = labelSpot(pts, tw, obs, labelBoxes);
+      labelBoxes.push({ x: at[0] - tw / 2, y: at[1] - 10, w: tw, h: 20 });
       labels.push(s("g", { className: ["ea-link-label", `ea-l-${l.style}`] }, [
         s("rect", { x: num(at[0] - tw / 2), y: num(at[1] - 10), width: num(tw), height: 20, rx: 10 }),
         s("text", { x: num(at[0]), y: num(at[1] + 4) }, l.label),
