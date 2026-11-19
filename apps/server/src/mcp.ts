@@ -6,7 +6,7 @@ import { addComment } from "./services/comments.js";
 import { HttpError } from "./services/errors.js";
 import * as pagesSvc from "./services/pages.js";
 import { searchPages } from "./services/search.js";
-import { applyEdits, createSuggestion } from "./services/suggestions.js";
+import { agentAcceptSuggestion, applyEdits, createSuggestion } from "./services/suggestions.js";
 import type { GitHubClient } from "./services/github.js";
 import { normalizeRepo } from "./services/github.js";
 import * as reposSvc from "./services/repos.js";
@@ -31,8 +31,9 @@ const fail = (message: string) => ({ content: [{ type: "text" as const, text: me
 
 /**
  * Elemnt as an MCP server. Claude reads pages as Markdown, learns the component
- * syntax, and writes back only as drafts and suggestions that a person reviews:
- * nothing an agent does goes live on its own.
+ * syntax, and writes back as drafts and suggestions that a person reviews.
+ * Only where an admin turned on "Let Claude publish" for a space (or a site)
+ * may Claude put its own changes live, and never over a person's draft.
  */
 export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId: string }) {
   const server = new McpServer({ name: "elemnt", version: "0.1.0" }, { instructions: INSTRUCTIONS });
@@ -67,10 +68,10 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
 
   server.registerTool(
     "list_spaces",
-    { title: "List spaces", description: "Lists the documentation spaces in this workspace.", annotations: { readOnlyHint: true } },
+    { title: "List spaces", description: "Lists the documentation spaces in this workspace, and whether Claude may publish in each (agentPublish).", annotations: { readOnlyHint: true } },
     tool(async () => {
       const all = (await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).filter((s) => canReadSpace(viewer, s));
-      return text(all.map((s) => ({ slug: s.slug, name: s.name, visibility: s.visibility })));
+      return text(all.map((s) => ({ slug: s.slug, name: s.name, visibility: s.visibility, agentPublish: s.agentPublish })));
     }),
   );
 
@@ -214,15 +215,24 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
       "create_draft",
       {
         title: "Create a page draft",
-        description: "Creates a new page as an unpublished draft. A person reviews and publishes it in Elemnt. Fails if the path is taken; use suggest_edit for existing pages. Start the source with frontmatter (title, summary).",
-        inputSchema: { space: z.string(), path: z.string().describe("e.g. deploying, or guides/deploying when the page guides exists"), source: z.string(), message: z.string().optional() },
+        description:
+          "Creates a new page as an unpublished draft. A person reviews and publishes it in Elemnt. Fails if the path is taken; use suggest_edit for existing pages. Start the source with frontmatter (title, summary). With publish: true, and only in a space that lets Claude publish (agentPublish in list_spaces), the page goes live straight away if it has no errors.",
+        inputSchema: {
+          space: z.string(),
+          path: z.string().describe("e.g. deploying, or guides/deploying when the page guides exists"),
+          source: z.string(),
+          message: z.string().optional(),
+          publish: z.boolean().default(false).describe("Publish now. Only works where the space allows it (agentPublish)."),
+        },
       },
-      tool(async ({ space: slug, path, source, message }: { space: string; path: string; source: string; message?: string }) => {
+      tool(async ({ space: slug, path, source, message, publish }: { space: string; path: string; source: string; message?: string; publish?: boolean }) => {
         const s = await space(slug);
-        const created = await pagesSvc.createPage(deps, { spaceId: s.id, path, source, authorId: viewer.userId, message: message ?? "Drafted by Claude", draft: true });
+        if (publish) pagesSvc.assertAgentPublish(s);
         const p = pagesSvc.normalizePath(path);
         const check = deps.elemnt.compile(source);
-        return text({ pageId: created.pageId, status: "draft", review: reviewUrl(slug, p), diagnostics: check.diagnostics });
+        if (publish && !check.ok) return fail(`Not published: fix these errors first (or create it as a draft).\n${JSON.stringify(check.diagnostics, null, 2)}`);
+        const created = await pagesSvc.createPage(deps, { spaceId: s.id, path, source, authorId: viewer.userId, message: message ?? (publish ? "Written and published by Claude" : "Drafted by Claude"), draft: !publish, byAgent: true });
+        return text({ pageId: created.pageId, status: publish ? "published" : "draft", review: reviewUrl(slug, p), diagnostics: check.diagnostics });
       }),
     );
 
@@ -256,23 +266,64 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
       {
         title: "Suggest an edit",
         description:
-          "Proposes a change to an existing page. It is never applied directly: a person reviews it hunk by hunk. Send either the complete new source, or edits that replace exact text from the current source (read it with get_page format \"source\" first).",
+          "Proposes a change to an existing page; a person reviews it hunk by hunk. Send either the complete new source, or edits that replace exact text from the current source (read it with get_page format \"source\" first). With publish: true, and only in a space that lets Claude publish (agentPublish in list_spaces), the change is applied and published straight away, unless a person has an unpublished draft of the page (then it stays a suggestion).",
         inputSchema: {
           space: z.string(),
           path: z.string(),
           summary: z.string().describe("One sentence for the reviewer: what changed and why."),
           source: z.string().optional(),
           edits: z.array(z.object({ find: z.string(), replace: z.string() })).optional(),
+          publish: z.boolean().default(false).describe("Apply and publish now. Only works where the space allows it (agentPublish)."),
         },
       },
-      tool(async (args: { space: string; path: string; summary: string; source?: string; edits?: { find: string; replace: string }[] }) => {
+      tool(async (args: { space: string; path: string; summary: string; source?: string; edits?: { find: string; replace: string }[]; publish?: boolean }) => {
         if (!args.source === !args.edits) return fail("Send exactly one of source or edits.");
-        const { page: p } = await page(args.space, args.path);
+        const { space: sp, page: p } = await page(args.space, args.path);
+        if (args.publish) pagesSvc.assertAgentPublish(sp);
         const base = pagesSvc.headRevisionId(p);
         if (!base) return fail("This page has no content yet.");
         const proposed = args.source ?? applyEdits(await pagesSvc.readRevision(deps, base, "source"), args.edits!);
         const { id, check } = await createSuggestion(deps, { pageId: p.id, baseRevisionId: base, proposed, origin: "mcp", authorId: viewer.userId, summary: args.summary });
-        return text({ suggestionId: id, review: reviewUrl(args.space, p.path, id), diagnostics: check });
+        const out = { suggestionId: id, review: reviewUrl(args.space, p.path, id), diagnostics: check };
+        if (!args.publish) return text(out);
+        if (check.some((d) => d.severity === "error")) return text({ ...out, published: false, note: "Not published: the change has errors. Fix them and suggest again." });
+        try {
+          const done = await agentAcceptSuggestion(deps, { id, userId: viewer.userId, space: sp });
+          return text({ ...out, published: true, revisionId: done.revisionId, page: reviewUrl(args.space, p.path) });
+        } catch (err) {
+          if (err instanceof HttpError) return text({ ...out, published: false, note: err.message });
+          throw err;
+        }
+      }),
+    );
+
+    server.registerTool(
+      "publish_page",
+      {
+        title: "Publish a page",
+        description:
+          "Publishes a page's draft, only when Claude wrote that draft and only in a space that lets Claude publish (agentPublish in list_spaces). A person's draft is theirs to publish. Every publish is a revision a person can restore.",
+        inputSchema: { space: z.string(), path: z.string() },
+      },
+      tool(async (args: { space: string; path: string }) => {
+        const { space: sp, page: p } = await page(args.space, args.path);
+        const out = await pagesSvc.agentPublishDraft(deps, { space: sp, pageId: p.id, userId: viewer.userId });
+        return text({ published: true, revisionId: out.revisionId, page: reviewUrl(args.space, p.path) });
+      }),
+    );
+
+    server.registerTool(
+      "accept_suggestion",
+      {
+        title: "Accept and publish a suggestion",
+        description:
+          "Applies one of Claude's own open suggestions (made with suggest_edit) and publishes the page, only in a space that lets Claude publish (agentPublish in list_spaces) and only when no person has an unpublished draft of the page.",
+        inputSchema: { space: z.string(), suggestion: z.string().describe("The suggestion id, e.g. sug_...") },
+      },
+      tool(async (args: { space: string; suggestion: string }) => {
+        const sp = await space(args.space);
+        const out = await agentAcceptSuggestion(deps, { id: args.suggestion, userId: viewer.userId, space: sp });
+        return text({ published: true, revisionId: out.revisionId, partial: out.partial });
       }),
     );
   }
@@ -305,8 +356,15 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
       { title: "List project websites", description: "Lists the workspace's project websites: name, address, linked docs space, repo, whether they're published, who can open them (public or space members only), and whether Claude may publish them directly (agentPublish).", annotations: { readOnlyHint: true } },
       tool(async () => {
         const all = await sitesSvc.listSites(sitesDeps, ctx.workspaceId);
-        const spaceSlugs = new Map((await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).map((s) => [s.id, s.slug]));
-        return text(all.map((s) => ({ site: s.slug, name: s.name, url: s.url, docsSpace: s.spaceId ? spaceSlugs.get(s.spaceId) : null, repo: s.repo, published: s.published, unpublishedChanges: s.unpublishedChanges, visibility: s.visibility, agentPublish: s.agentPublish })));
+        const spaceRows = new Map((await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).map((s) => [s.id, s]));
+        return text(
+          all.map((s) => {
+            const sp = s.spaceId ? spaceRows.get(s.spaceId) : undefined;
+            // The site's own switch, or its docs space's.
+            const agentPublish = s.agentPublish || Boolean(sp && !sp.deletedAt && sp.agentPublish);
+            return { site: s.slug, name: s.name, url: s.url, docsSpace: sp?.slug ?? null, repo: s.repo, published: s.published, unpublishedChanges: s.unpublishedChanges, visibility: s.visibility, agentPublish };
+          }),
+        );
       }),
     );
 
@@ -337,6 +395,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         const open = await sitesSvc.listChangesets(sitesDeps, s, "open");
         return text({
           ...sitesSvc.describe(sitesDeps, s),
+          agentPublish: await sitesSvc.mayAgentPublish(deps.db, s),
           docsSpace: space?.slug ?? null,
           docs,
           siteJson: config,
@@ -405,7 +464,8 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         },
         tool(async (args: { site: string; summary: string; files: { path: string; content: string | null; encoding?: "utf8" | "base64" }[]; publish: boolean }) => {
           const s = await requireSite(args.site);
-          if (args.publish && !s.agentPublish) await sitesSvc.agentPublish(sitesDeps, s, viewer.userId); // throws the 403 that explains the switch
+          // Check before proposing, so a refused publish doesn't leave a change set behind.
+          if (args.publish && !(await sitesSvc.mayAgentPublish(deps.db, s))) await sitesSvc.agentPublish(sitesDeps, s, viewer.userId); // throws the 403 that explains the switch
           const cs = await sitesSvc.proposeChanges(sitesDeps, s, { summary: args.summary, files: args.files, authorId: viewer.userId, source: "mcp" });
           const prev = await sitesSvc.previewChangeset(sitesDeps, s, cs.id, viewer.userId);
           const base = { changeSet: cs.id, review: siteReview(s.slug, cs.id), preview: prev.url, diagnostics: prev.diagnostics };
@@ -497,9 +557,9 @@ First search for an existing page on this; if one exists, improve it with sugges
 
 const INSTRUCTIONS = `Elemnt hosts this team's documentation. Pages are written in Markdown with directives for rich components; people see a rendered page and you get Markdown.
 
-To answer questions, use search, then get_page. To write docs, call get_style_guide and get_authoring_guide once. Follow the organization theme if there is one; otherwise ask the user what style and fonts they'd like (or use their saved style). Pages should look like a designed web page and pull the reader in, while staying exact and easy to scan. Then use create_draft for new pages or suggest_edit for existing ones, and validate first. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back.
+To answer questions, use search, then get_page. To write docs, call get_style_guide and get_authoring_guide once. Follow the organization theme if there is one; otherwise ask the user what style and fonts they'd like (or use their saved style). Pages should look like a designed web page and pull the reader in, while staying exact and easy to scan. Then use create_draft for new pages or suggest_edit for existing ones, and validate first. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back. If a space lets Claude publish (agentPublish in list_spaces), you may pass publish: true to create_draft or suggest_edit, or call publish_page / accept_suggestion for your own earlier work; you never publish over a person's unpublished draft.
 
-Projects can also have their own website (list_sites): a fully designed multi-page site, with 3D and motion, around the project's docs. To build or restyle one, read get_site_design_guide, then use create_site and propose_site_changes; a person applies and publishes, unless the site lets Claude publish (agentPublish), in which case pass publish: true or call publish_site.`;
+Projects can also have their own website (list_sites): a fully designed multi-page site, with 3D and motion, around the project's docs. To build or restyle one, read get_site_design_guide, then use create_site and propose_site_changes; a person applies and publishes, unless the site or its docs space lets Claude publish (agentPublish), in which case pass publish: true or call publish_site.`;
 
 /** Handles one stateless MCP request (Streamable HTTP, JSON responses). */
 export async function handleMcp(req: Request, deps: McpDeps, ctx: { viewer: Viewer; workspaceId: string }): Promise<Response> {

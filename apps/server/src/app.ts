@@ -4,7 +4,7 @@ import { Hono, type Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { z } from "zod";
 import type { Db } from "./db/index.js";
-import { visibilities, type spaces } from "./db/schema.js";
+import { visibilities, spaces } from "./db/schema.js";
 import type { BlobStore } from "./lib/blobs.js";
 import type { Config } from "./lib/config.js";
 import { SecretBox, safeEqual } from "./lib/crypto.js";
@@ -988,6 +988,15 @@ export function createApp(deps: AppDeps) {
     // Whoever makes a private space can read it, even if they aren't an owner.
     if (space.visibility === "private" && viewer.role !== "owner") await spaceAccess.addMember(deps.db, space, viewer.userId, viewer.userId);
     return c.json(space, 201);
+  });
+
+  /** Space settings. For now: whether Claude may publish here on its own (admins only). */
+  app.patch("/api/spaces/:space", async (c) => {
+    requireRole(c, "admin");
+    const space = await readableSpace(c, c.req.param("space")!);
+    const input = z.object({ agentPublish: z.boolean() }).parse(await c.req.json());
+    const [updated] = await deps.db.update(spaces).set({ agentPublish: input.agentPublish }).where(eq(spaces.id, space.id)).returning();
+    return c.json(updated);
   });
 
   // ---------- who can read a private space ----------

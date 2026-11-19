@@ -7,7 +7,7 @@ import { Palette } from "./Palette";
 import { Settings, type SettingsTab } from "./Settings";
 import { siteNavigate, SitesHome } from "./SiteStudio";
 import { SpaceMembersDialog } from "./SpaceMembers";
-import { DeleteSpaceDialog, MovePageDialog } from "./SpaceActions";
+import { ClaudePublishDialog, DeleteSpaceDialog, MovePageDialog } from "./SpaceActions";
 import { navigate, useRoute } from "./router";
 import { withStyle } from "./look";
 import { restartTour, Tour } from "./Tour";
@@ -330,7 +330,7 @@ function Shell() {
   const [pages, setPages] = useState<TreePage[]>([]);
   const [palette, setPalette] = useState(false);
   const [settings, setSettings] = useState<SettingsTab | false>(false);
-  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys" | "access" | "move" | "delete-space">();
+  const [dialog, setDialog] = useState<"page" | "explain" | "space" | "keys" | "access" | "move" | "delete-space" | "claude">();
 
   useEffect(() => {
     getMe()
@@ -470,12 +470,15 @@ function Shell() {
                   <Icon name="team" size={14} />
                 </button>
               )}
-              {space && me?.role === "owner" && (
+              {space && canAdmin && (
                 <Menu
                   label={`${space.name} options`}
                   align="end"
                   trigger={<Icon name="more" size={14} />}
-                  items={[{ label: "Delete space…", icon: "trash", danger: true, onSelect: () => setDialog("delete-space") }]}
+                  items={[
+                    { label: space.agentPublish ? "Claude can publish here…" : "Let Claude publish…", icon: "sparkle", onSelect: () => setDialog("claude") },
+                    ...(me?.role === "owner" ? [{ label: "Delete space…", icon: "trash" as const, danger: true, onSelect: () => setDialog("delete-space") }] : []),
+                  ]}
                 />
               )}
               </span>
@@ -549,6 +552,7 @@ function Shell() {
           }}
         />
       )}
+      {dialog === "claude" && space && <ClaudePublishDialog space={space} onClose={() => setDialog(undefined)} onSaved={() => void reloadSpaces()} />}
       {dialog === "delete-space" && space && (
         <DeleteSpaceDialog
           space={space}

@@ -9,7 +9,7 @@
   </picture>
 </a>
 
-Elemnt is a self-hostable documentation platform built for teams that work with AI. You write a page in Markdown with a few component blocks. Elemnt publishes it two ways from the same source: as an interactive page for your readers (charts, sliders, quizzes, runnable code, diagrams), and as plain Markdown for Claude and other agents. Claude can read your docs, draft new pages and suggest edits, but nothing goes live until a person approves it.
+Elemnt is a self-hostable documentation platform built for teams that work with AI. You write a page in Markdown with a few component blocks. Elemnt publishes it two ways from the same source: as an interactive page for your readers (charts, sliders, quizzes, runnable code, diagrams), and as plain Markdown for Claude and other agents. Claude can read your docs, draft new pages and suggest edits, but nothing goes live until a person approves it, unless an admin turns on "Let Claude publish" for a space.
 
 ![A page in the Elemnt reader: tabs, a chart and a sortable table](docs/images/reader.png)
 

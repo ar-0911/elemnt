@@ -85,6 +85,13 @@
       "when": 1795019358315,
       "tag": "0011_site_access",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795089250026,
+      "tag": "0012_agent_publish",
+      "breakpoints": true
     }
   ]
 }

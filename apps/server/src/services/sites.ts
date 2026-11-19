@@ -387,11 +387,24 @@ export async function releases(deps: SitesDeps, site: Site) {
 }
 
 /**
+ * Claude may publish a site when the site's own switch is on, or when the docs
+ * space it shows lets Claude publish (one switch covers a space's pages and sites).
+ */
+export async function mayAgentPublish(db: Db, site: Pick<Site, "agentPublish" | "spaceId">): Promise<boolean> {
+  if (site.agentPublish) return true;
+  if (!site.spaceId) return false;
+  const [space] = await db.select({ agentPublish: spaces.agentPublish, deletedAt: spaces.deletedAt }).from(spaces).where(eq(spaces.id, site.spaceId));
+  return Boolean(space && !space.deletedAt && space.agentPublish);
+}
+
+/**
  * Claude publishing on its own: applies a change set and publishes the draft,
  * only when a person turned on agent publishing for this site.
  */
 export async function agentPublish(deps: SitesDeps, site: Site, userId: string, changesetId?: string) {
-  if (!site.agentPublish) throw new HttpError(403, `Claude can't publish "${site.slug}" on its own. A person can turn on "Let Claude publish" in the site's settings, or press Publish in the Websites studio.`);
+  if (!(await mayAgentPublish(deps.db, site))) {
+    throw new HttpError(403, `Claude can't publish "${site.slug}" on its own. A person can turn on "Let Claude publish" in the site's settings (or in the options of the docs space it shows), or press Publish in the Websites studio.`);
+  }
   let current = site;
   if (changesetId) current = await applyChangeset(deps, site, changesetId);
   return publish(deps, current, userId);

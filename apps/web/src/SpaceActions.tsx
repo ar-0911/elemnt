@@ -338,3 +338,49 @@ export function TrashSection({ onRestored }: { onRestored?(): void }) {
     </>
   );
 }
+
+/** "Let Claude publish": one switch for a space's pages, Claude's suggestions and the websites that show it. */
+export function ClaudePublishDialog({ space, onClose, onSaved }: { space: Space; onClose(): void; onSaved(): void }) {
+  const toast = useToast();
+  const [on, setOn] = useState(Boolean(space.agentPublish));
+  const [busy, setBusy] = useState(false);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.patch(`/api/spaces/${space.slug}`, { agentPublish: on });
+      toast(on ? `Claude can now publish in ${space.name}.` : `Claude's changes in ${space.name} wait for review again.`);
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast((err as ApiError).message, "error");
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog title={`Claude in ${space.name}`} onClose={onClose}>
+      <form className="form" onSubmit={(e) => void submit(e)}>
+        <label className="row">
+          <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} /> Let Claude publish in this space
+        </label>
+        <p className="hint">When it's on, Claude can, over MCP:</p>
+        <ul className="hint">
+          <li>publish new pages it writes, and its own drafts</li>
+          <li>apply and publish its own suggested edits</li>
+          <li>publish the websites that show this space</li>
+        </ul>
+        <p className="hint">
+          Claude never publishes over a person's unpublished draft, and can't accept anyone else's suggestions. Every publish is a revision (or a site release) you can restore. When it's off, everything Claude writes waits for your review.
+        </p>
+        <div className="form-actions">
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={busy || on === Boolean(space.agentPublish)}>
+            Save
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}

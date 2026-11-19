@@ -566,7 +566,7 @@ function SiteSettingsDialog({ site, spaces, onClose, onSaved }: { site: SiteDeta
         <label className="row">
           <input type="checkbox" checked={agentPublish} onChange={(e) => setAgentPublish(e.target.checked)} /> Let Claude publish changes
         </label>
-        <span className="hint">When on, Claude can put its site changes live over MCP without waiting for you. Every publish is kept under Releases, so you can roll back. Docs pages still need your OK.</span>
+        <span className="hint">When on, Claude can put its site changes live over MCP without waiting for you. Every publish is kept under Releases, so you can roll back. Turning on “Let Claude publish” for the docs space this site shows does the same, and covers its pages too.</span>
         {error && <p className="form-error">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn" onClick={onClose}>
