@@ -44,7 +44,7 @@ export function registerSiteRoutes(app: Hono<AnyEnv>, deps: SiteRouteDeps) {
   app.post("/api/sites", async (c) => {
     deps.requireRole(c, "editor");
     const input = z
-      .object({ slug: z.string(), name: z.string().min(1).max(120), space: z.string().optional(), repo: repoField, tagline: z.string().max(300).optional(), template: z.enum(["starter", "blank"]).optional() })
+      .object({ slug: z.string(), name: z.string().min(1).max(120), space: z.string().optional(), repo: repoField, tagline: z.string().max(300).optional(), template: z.enum(["starter", "blank"]).optional(), visibility: z.enum(["public", "members"]).optional() })
       .parse(await c.req.json());
     const row = await sitesSvc.createSite(deps, deps.workspaceId(c), { ...input, ...(input.space ? { spaceSlug: input.space } : {}) });
     return c.json(sitesSvc.describe(deps, row), 201);
@@ -58,8 +58,21 @@ export function registerSiteRoutes(app: Hono<AnyEnv>, deps: SiteRouteDeps) {
 
   app.patch("/api/sites/:slug", async (c) => {
     deps.requireRole(c, "editor");
-    const input = z.object({ name: z.string().min(1).max(120).optional(), space: z.string().nullable().optional(), hostname: z.string().max(253).nullable().optional(), repo: repoField }).parse(await c.req.json());
+    const input = z
+      .object({
+        name: z.string().min(1).max(120).optional(),
+        space: z.string().nullable().optional(),
+        hostname: z.string().max(253).nullable().optional(),
+        repo: repoField,
+        visibility: z.enum(["public", "members"]).optional(),
+        agentPublish: z.boolean().optional(),
+      })
+      .parse(await c.req.json());
+    // Who can see the site, and whether Claude may publish it alone, are admin decisions.
+    if (input.visibility !== undefined || input.agentPublish !== undefined) deps.requireRole(c, "admin");
     const row = await sitesSvc.updateSite(deps, await site(c), {
+      ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
+      ...(input.agentPublish !== undefined ? { agentPublish: input.agentPublish } : {}),
       ...(input.name !== undefined ? { name: input.name } : {}),
       ...(input.space !== undefined ? { spaceSlug: input.space } : {}),
       ...(input.hostname !== undefined ? { hostname: input.hostname } : {}),

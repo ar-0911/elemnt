@@ -61,7 +61,9 @@ describe("designing sites over MCP", () => {
   it("lists the site tools and the design_site prompt", async () => {
     const tools = (await rpc("tools/list")).result.tools!.map((x) => x.name);
     expect(tools).toEqual(expect.arrayContaining(["list_sites", "get_site_design_guide", "get_site", "read_site_file", "create_site", "propose_site_changes", "preview_site"]));
-    expect(tools).not.toContain("publish_site");
+    // Publishing is only for sites whose owner opted in (see sites-access.test.ts).
+    expect(tools).toContain("publish_site");
+    expect((await tool("publish_site", { site: "nope" })).isError).toBe(true);
     expect((await rpc("prompts/list")).result.prompts!.map((p) => p.name)).toContain("design_site");
     expect((await tool("get_site_design_guide", {})).text).toContain("three/addons/controls/OrbitControls.js");
   });

@@ -302,11 +302,11 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
 
     server.registerTool(
       "list_sites",
-      { title: "List project websites", description: "Lists the workspace's project websites: name, address, linked docs space, repo, and whether they're published.", annotations: { readOnlyHint: true } },
+      { title: "List project websites", description: "Lists the workspace's project websites: name, address, linked docs space, repo, whether they're published, who can open them (public or space members only), and whether Claude may publish them directly (agentPublish).", annotations: { readOnlyHint: true } },
       tool(async () => {
         const all = await sitesSvc.listSites(sitesDeps, ctx.workspaceId);
         const spaceSlugs = new Map((await deps.db.query.spaces.findMany({ where: (s, { eq }) => eq(s.workspaceId, ctx.workspaceId) })).map((s) => [s.id, s.slug]));
-        return text(all.map((s) => ({ site: s.slug, name: s.name, url: s.url, docsSpace: s.spaceId ? spaceSlugs.get(s.spaceId) : null, repo: s.repo, published: s.published, unpublishedChanges: s.unpublishedChanges })));
+        return text(all.map((s) => ({ site: s.slug, name: s.name, url: s.url, docsSpace: s.spaceId ? spaceSlugs.get(s.spaceId) : null, repo: s.repo, published: s.published, unpublishedChanges: s.unpublishedChanges, visibility: s.visibility, agentPublish: s.agentPublish })));
       }),
     );
 
@@ -361,7 +361,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         {
           title: "Create a project website",
           description:
-            "Creates a new project website from the starter design (multi-page with top nav, docs layout, 3D hero), unpublished. `space` is the docs space whose pages become /docs; create one first if needed. The site's address is <site>.<sites domain>. Then restyle it with propose_site_changes.",
+            "Creates a new project website from the starter design (multi-page with top nav, docs layout, 3D hero), unpublished. `space` is the docs space whose pages become /docs; create one first if needed. The site's address is <site>.<sites domain>. visibility \"members\" makes it sign-in only: just the people who can read its docs space can open it (required for a private space). Then restyle it with propose_site_changes.",
           inputSchema: {
             site: z.string().describe('Lowercase name, also the subdomain, e.g. "rocket"'),
             name: z.string(),
@@ -369,13 +369,15 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
             repo: z.string().optional().describe("owner/name of the repo the site is about"),
             tagline: z.string().optional(),
             template: z.enum(["starter", "blank"]).default("starter"),
+            visibility: z.enum(["public", "members"]).default("public").describe('"members": only people who can read the docs space, after signing in to Elemnt'),
           },
         },
-        tool(async (args: { site: string; name: string; space?: string; repo?: string; tagline?: string; template: "starter" | "blank" }) => {
+        tool(async (args: { site: string; name: string; space?: string; repo?: string; tagline?: string; template: "starter" | "blank"; visibility: "public" | "members" }) => {
           const created = await sitesSvc.createSite(sitesDeps, ctx.workspaceId, {
             slug: args.site,
             name: args.name,
             template: args.template,
+            visibility: args.visibility,
             ...(args.space ? { spaceSlug: args.space } : {}),
             ...(args.repo ? { repo: normalizeRepo(args.repo) } : {}),
             ...(args.tagline ? { tagline: args.tagline } : {}),
@@ -390,7 +392,7 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
         {
           title: "Propose site changes",
           description:
-            "Proposes whole-file changes to a site (create, replace, or delete with content null). Nothing changes until a person applies it in the studio. Returns a preview URL showing the site with these changes, plus any template errors to fix. Read files first with read_site_file; send complete file contents.",
+            "Proposes whole-file changes to a site (create, replace, or delete with content null). Returns a preview URL showing the site with these changes, plus any template errors to fix. Read files first with read_site_file; send complete file contents. By default nothing changes until a person applies it in the studio. With publish: true, and only on a site whose owner turned on \"Let Claude publish\" (agentPublish in get_site), the changes are applied and published live straight away if there are no errors.",
           inputSchema: {
             site: z.string(),
             summary: z.string().describe("One line for the reviewer: what changed and why."),
@@ -398,13 +400,35 @@ export function buildMcpServer(deps: McpDeps, ctx: { viewer: Viewer; workspaceId
               .array(z.object({ path: z.string(), content: z.string().nullable(), encoding: z.enum(["utf8", "base64"]).optional() }))
               .min(1)
               .max(120),
+            publish: z.boolean().default(false).describe("Apply and publish live now. Only works when the site allows it (agentPublish)."),
           },
         },
-        tool(async (args: { site: string; summary: string; files: { path: string; content: string | null; encoding?: "utf8" | "base64" }[] }) => {
+        tool(async (args: { site: string; summary: string; files: { path: string; content: string | null; encoding?: "utf8" | "base64" }[]; publish: boolean }) => {
           const s = await requireSite(args.site);
+          if (args.publish && !s.agentPublish) await sitesSvc.agentPublish(sitesDeps, s, viewer.userId); // throws the 403 that explains the switch
           const cs = await sitesSvc.proposeChanges(sitesDeps, s, { summary: args.summary, files: args.files, authorId: viewer.userId, source: "mcp" });
           const prev = await sitesSvc.previewChangeset(sitesDeps, s, cs.id, viewer.userId);
-          return text({ changeSet: cs.id, review: siteReview(s.slug, cs.id), preview: prev.url, diagnostics: prev.diagnostics });
+          const base = { changeSet: cs.id, review: siteReview(s.slug, cs.id), preview: prev.url, diagnostics: prev.diagnostics };
+          if (!args.publish) return text(base);
+          const errors = prev.diagnostics.filter((d) => !/only its content shows/.test(d.message));
+          if (errors.length) return text({ ...base, published: false, note: "Not published: fix the errors in diagnostics and propose again." });
+          const out = await sitesSvc.agentPublish(sitesDeps, s, viewer.userId, cs.id);
+          return text({ ...base, published: true, url: sitesSvc.siteUrl(sitesDeps, out.site) ?? null, release: out.release.id });
+        }),
+      );
+
+      server.registerTool(
+        "publish_site",
+        {
+          title: "Publish a site",
+          description:
+            "Publishes a site's current draft live, optionally applying an open change set first. Only works on a site whose owner turned on \"Let Claude publish\" (agentPublish in get_site); otherwise a person publishes in the Websites studio.",
+          inputSchema: { site: z.string(), changeSet: z.string().optional().describe("An open change set to apply before publishing") },
+        },
+        tool(async (args: { site: string; changeSet?: string }) => {
+          const s = await requireSite(args.site);
+          const out = await sitesSvc.agentPublish(sitesDeps, s, viewer.userId, args.changeSet);
+          return text({ site: s.slug, published: true, url: sitesSvc.siteUrl(sitesDeps, out.site) ?? null, release: out.release.id, diagnostics: out.diagnostics });
         }),
       );
 
@@ -475,7 +499,7 @@ const INSTRUCTIONS = `Elemnt hosts this team's documentation. Pages are written 
 
 To answer questions, use search, then get_page. To write docs, call get_style_guide and get_authoring_guide once. Follow the organization theme if there is one; otherwise ask the user what style and fonts they'd like (or use their saved style). Pages should look like a designed web page and pull the reader in, while staying exact and easy to scan. Then use create_draft for new pages or suggest_edit for existing ones, and validate first. Your writes are drafts and suggestions that a person reviews before anything is published; share the review link you get back.
 
-Projects can also have their own website (list_sites): a fully designed multi-page site, with 3D and motion, around the project's docs. To build or restyle one, read get_site_design_guide, then use create_site and propose_site_changes; a person applies and publishes.`;
+Projects can also have their own website (list_sites): a fully designed multi-page site, with 3D and motion, around the project's docs. To build or restyle one, read get_site_design_guide, then use create_site and propose_site_changes; a person applies and publishes, unless the site lets Claude publish (agentPublish), in which case pass publish: true or call publish_site.`;
 
 /** Handles one stateless MCP request (Streamable HTTP, JSON responses). */
 export async function handleMcp(req: Request, deps: McpDeps, ctx: { viewer: Viewer; workspaceId: string }): Promise<Response> {

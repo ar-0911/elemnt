@@ -48,23 +48,30 @@ export async function issueToken(db: Db, userId: string, name: string): Promise<
 
 export async function viewerForToken(db: Db, workspaceId: string, token: string): Promise<Viewer | undefined> {
   const [row] = await db
-    .select({ userId: users.id, email: users.email, tokenId: apiTokens.id, expiresAt: apiTokens.expiresAt })
+    .select({ userId: users.id, tokenId: apiTokens.id, expiresAt: apiTokens.expiresAt })
     .from(apiTokens)
     .innerJoin(users, eq(users.id, apiTokens.userId))
     .where(eq(apiTokens.tokenHash, sha256(token)));
   if (!row || (row.expiresAt && row.expiresAt < new Date())) return undefined;
-  const [member] = await db.select({ role: members.role }).from(members).where(and(eq(members.workspaceId, workspaceId), eq(members.userId, row.userId)));
   await db.update(apiTokens).set({ lastUsedAt: new Date() }).where(eq(apiTokens.id, row.tokenId));
+  return viewerForUser(db, workspaceId, row.userId);
+}
+
+/** A person's role in the workspace and the private spaces they were added to. */
+export async function viewerForUser(db: Db, workspaceId: string, userId: string): Promise<Viewer | undefined> {
+  const [user] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId));
+  if (!user) return undefined;
+  const [member] = await db.select({ role: members.role }).from(members).where(and(eq(members.workspaceId, workspaceId), eq(members.userId, userId)));
   const privateSpaces = member
     ? (
         await db
           .select({ id: spaceMembers.spaceId })
           .from(spaceMembers)
           .innerJoin(spaces, eq(spaces.id, spaceMembers.spaceId))
-          .where(and(eq(spaceMembers.userId, row.userId), eq(spaces.workspaceId, workspaceId)))
+          .where(and(eq(spaceMembers.userId, userId), eq(spaces.workspaceId, workspaceId)))
       ).map((r) => r.id)
     : [];
-  return { userId: row.userId, email: row.email, role: member?.role, privateSpaces };
+  return { userId, email: user.email, role: member?.role, privateSpaces };
 }
 
 const RANK: Record<Role, number> = { viewer: 0, editor: 1, admin: 2, owner: 3 };

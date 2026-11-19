@@ -9,6 +9,7 @@ import { siteRenderer, type Diagnostic, type DocPage, type SiteRef, type SiteSna
 import { starterFiles } from "../sites/starter.js";
 import { EMPTY_TREE, loadTree, normalizeFilePath, readFileText, saveTree, writeFiles, type Tree } from "../sites/tree.js";
 import { HttpError } from "./errors.js";
+import { canReadSpace, type Viewer } from "./workspace.js";
 import { readRevision } from "./pages.js";
 import { decorateWidgets } from "./widgets.js";
 
@@ -68,6 +69,8 @@ export function describe(deps: Pick<SitesDeps, "sitesDomain" | "publicUrl">, s: 
     published: Boolean(s.publishedTree),
     publishedAt: s.publishedAt,
     unpublishedChanges: s.publishedTree !== s.draftTree,
+    visibility: s.visibility,
+    agentPublish: s.agentPublish,
     updatedAt: s.updatedAt,
   };
 }
@@ -90,15 +93,16 @@ export async function requireSite(db: Db, workspaceId: string, slug: string) {
 export async function createSite(
   deps: SitesDeps,
   workspaceId: string,
-  input: { slug: string; name: string; spaceSlug?: string; repo?: string | null; tagline?: string; template?: "starter" | "blank" },
+  input: { slug: string; name: string; spaceSlug?: string; repo?: string | null; tagline?: string; template?: "starter" | "blank"; visibility?: "public" | "members" },
 ) {
+  const visibility = input.visibility ?? "public";
   checkSlug(input.slug);
   if (await findSite(deps.db, workspaceId, input.slug)) throw new HttpError(409, `A site called "${input.slug}" already exists.`);
   let spaceId: string | null = null;
   if (input.spaceSlug) {
     const [space] = await deps.db.select().from(spaces).where(and(eq(spaces.workspaceId, workspaceId), eq(spaces.slug, input.spaceSlug), isNull(spaces.deletedAt)));
     if (!space) throw new HttpError(404, `No space "${input.spaceSlug}" to use for the site's docs.`);
-    if (space.visibility === "private") throw new HttpError(400, PRIVATE_DOCS);
+    if (space.visibility === "private" && visibility !== "members") throw new HttpError(400, PRIVATE_DOCS);
     spaceId = space.id;
   }
   const files = input.template === "blank" ? {} : starterFiles({ name: input.name, tagline: input.tagline ?? `${input.name}, explained.`, repo: input.repo ?? null });
@@ -110,23 +114,34 @@ export async function createSite(
   const treeHash = await saveTree(deps.blobs, tree);
   const [site] = await deps.db
     .insert(sites)
-    .values({ id: newId("site"), workspaceId, slug: input.slug, name: input.name, spaceId, repo: input.repo ?? null, draftTree: treeHash })
+    .values({ id: newId("site"), workspaceId, slug: input.slug, name: input.name, spaceId, repo: input.repo ?? null, visibility, draftTree: treeHash })
     .returning();
   return site!;
 }
 
-export async function updateSite(deps: SitesDeps, site: Site, input: { name?: string; spaceSlug?: string | null; hostname?: string | null; repo?: string | null }) {
+export async function updateSite(
+  deps: SitesDeps,
+  site: Site,
+  input: { name?: string; spaceSlug?: string | null; hostname?: string | null; repo?: string | null; visibility?: "public" | "members"; agentPublish?: boolean },
+) {
   const patch: Partial<Site> = { updatedAt: new Date() };
   if (input.name !== undefined) patch.name = input.name;
+  if (input.visibility !== undefined) patch.visibility = input.visibility;
+  if (input.agentPublish !== undefined) patch.agentPublish = input.agentPublish;
+  const visibility = patch.visibility ?? site.visibility;
   if (input.repo !== undefined) patch.repo = input.repo;
   if (input.spaceSlug !== undefined) {
     if (input.spaceSlug === null) patch.spaceId = null;
     else {
       const [space] = await deps.db.select().from(spaces).where(and(eq(spaces.workspaceId, site.workspaceId), eq(spaces.slug, input.spaceSlug), isNull(spaces.deletedAt)));
       if (!space) throw new HttpError(404, `No space "${input.spaceSlug}".`);
-      if (space.visibility === "private") throw new HttpError(400, PRIVATE_DOCS);
       patch.spaceId = space.id;
     }
+  }
+  const spaceId = patch.spaceId !== undefined ? patch.spaceId : site.spaceId;
+  if (visibility === "public" && spaceId) {
+    const [space] = await deps.db.select({ visibility: spaces.visibility }).from(spaces).where(eq(spaces.id, spaceId));
+    if (space?.visibility === "private") throw new HttpError(400, PRIVATE_DOCS);
   }
   if (input.hostname !== undefined) {
     const host = input.hostname?.trim().toLowerCase() || null;
@@ -250,21 +265,24 @@ export async function dismissChangeset(deps: SitesDeps, site: Site, id: string) 
 
 // ---------- rendering, preview, publish ----------
 
-const PRIVATE_DOCS = "Websites are public, so they can't show a private space's docs. Pick a workspace or public space.";
+const PRIVATE_DOCS = "A public website can't show a private space's docs. Make the site members-only, or pick a workspace or public space.";
 
-async function docsFor(db: Db, spaceId: string | null): Promise<DocPage[]> {
+async function docsFor(db: Db, site: Pick<Site, "spaceId" | "visibility">): Promise<DocPage[]> {
+  const spaceId = site.spaceId;
   if (!spaceId) return [];
-  // A space made private after it was linked stops feeding the site.
+  // A space made private after it was linked stops feeding a public site.
+  // A members-only site sits behind the same sign-in as the space, so it may.
   const rows = await db
     .select({ id: pages.id, path: pages.path, title: pages.title, summary: pages.summary, position: pages.position, revisionId: pages.publishedRevisionId, updatedAt: pages.updatedAt })
     .from(pages)
     .innerJoin(spaces, eq(spaces.id, pages.spaceId))
-    .where(and(eq(pages.spaceId, spaceId), isNotNull(pages.publishedRevisionId), ne(spaces.visibility, "private"), isNull(spaces.deletedAt)));
+    .where(and(eq(pages.spaceId, spaceId), isNotNull(pages.publishedRevisionId), ...(site.visibility === "members" ? [] : [ne(spaces.visibility, "private")]), isNull(spaces.deletedAt)));
   return rows.map((r) => ({ ...r, revisionId: r.revisionId!, updatedAt: new Date(r.updatedAt) }));
 }
 
 async function siteRefs(deps: SitesDeps, workspaceId: string): Promise<SiteRef[]> {
-  const rows = await deps.db.select().from(sites).where(and(eq(sites.workspaceId, workspaceId), isNotNull(sites.publishedTree))).orderBy(sites.name);
+  // Members-only sites never appear in other sites' listings.
+  const rows = await deps.db.select().from(sites).where(and(eq(sites.workspaceId, workspaceId), isNotNull(sites.publishedTree), eq(sites.visibility, "public"))).orderBy(sites.name);
   const out: SiteRef[] = [];
   for (const s of rows) {
     const url = siteUrl(deps, s);
@@ -285,13 +303,13 @@ async function siteRefs(deps: SitesDeps, workspaceId: string): Promise<SiteRef[]
 export async function snapshot(deps: SitesDeps, site: Site, treeHash: string, options: { preview?: string } = {}): Promise<SiteSnapshot> {
   const [tree, docs, refs, stamp, space] = await Promise.all([
     loadTree(deps.blobs, treeHash),
-    docsFor(deps.db, site.spaceId),
+    docsFor(deps.db, site),
     siteRefs(deps, site.workspaceId),
     deps.db.select({ at: max(sites.publishedAt), n: count() }).from(sites).where(eq(sites.workspaceId, site.workspaceId)),
     site.spaceId ? deps.db.query.spaces.findFirst({ where: (sp, { eq: is }) => is(sp.id, site.spaceId!) }) : undefined,
   ]);
   const url = siteUrl(deps, site, options.preview) ?? `${deps.publicUrl}/sites/${site.slug}`;
-  const docsKey = docs.map((d) => `${d.path}@${d.revisionId}:${d.position}:${d.title}`).join("|");
+  const docsKey = site.visibility + docs.map((d) => `${d.path}@${d.revisionId}:${d.position}:${d.title}`).join("|");
   return {
     key: `${treeHash}|${options.preview ?? ""}|${docsKey}|${stamp[0]?.at?.toString() ?? ""}:${stamp[0]?.n ?? 0}|${site.name}|${site.repo ?? ""}`,
     site: { id: site.id, slug: site.slug, name: site.name, repo: site.repo },
@@ -366,6 +384,32 @@ export async function unpublish(deps: SitesDeps, site: Site) {
 
 export async function releases(deps: SitesDeps, site: Site) {
   return deps.db.select().from(siteReleases).where(and(eq(siteReleases.siteId, site.id), eq(siteReleases.kind, "publish"))).orderBy(desc(siteReleases.createdAt)).limit(30);
+}
+
+/**
+ * Claude publishing on its own: applies a change set and publishes the draft,
+ * only when a person turned on agent publishing for this site.
+ */
+export async function agentPublish(deps: SitesDeps, site: Site, userId: string, changesetId?: string) {
+  if (!site.agentPublish) throw new HttpError(403, `Claude can't publish "${site.slug}" on its own. A person can turn on "Let Claude publish" in the site's settings, or press Publish in the Websites studio.`);
+  let current = site;
+  if (changesetId) current = await applyChangeset(deps, site, changesetId);
+  return publish(deps, current, userId);
+}
+
+// ---------- who may open a members-only site ----------
+
+/**
+ * Members-only sites follow their linked space: owners, plus whoever can read
+ * that space (for a private space, the people added to it). With no space
+ * linked, only owners and admins.
+ */
+export async function canOpenSite(db: Db, viewer: Viewer | undefined, site: Pick<Site, "visibility" | "spaceId">): Promise<boolean> {
+  if (site.visibility !== "members") return true;
+  if (!viewer?.role) return false;
+  if (!site.spaceId) return viewer.role === "owner" || viewer.role === "admin";
+  const [space] = await db.select({ id: spaces.id, visibility: spaces.visibility, deletedAt: spaces.deletedAt }).from(spaces).where(eq(spaces.id, site.spaceId));
+  return Boolean(space && canReadSpace(viewer, space));
 }
 
 // ---------- hostnames ----------

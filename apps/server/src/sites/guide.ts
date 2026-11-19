@@ -87,6 +87,11 @@ Colour tokens Elemnt's components read (set them in your CSS, also under \`:root
 - Read colours from CSS tokens (\`getComputedStyle(document.documentElement).getPropertyValue("--accent")\`) so the scene follows the theme.
 - Keep scenes light (a few thousand points, a few dozen meshes); load models (\`assets/*.glb\`) with GLTFLoader only when needed.
 - Fonts: load from Google Fonts in the layout's \`<head>\`.
+- System architecture: draw real infrastructure in 3D (zones as translucent platforms for VPCs, subnets and on-prem; services as recognisable shapes such as racks, gateways, databases and firewalls; links as arcs with packets moving along them; tunnels as glowing tubes), not floating boxes and arrows. In docs pages use \`:::architecture\` (see the authoring guide), which renders a proper 2D architecture diagram.
+
+## Who can open a site
+
+A site is public by default. With visibility \`members\`, visitors sign in with Elemnt and only people who can read the site's docs space get in (owners always can). A private space can only back a members site. Members sites are never cached by shared caches or indexed.
 
 ## Working as Claude
 
@@ -94,5 +99,5 @@ Colour tokens Elemnt's components read (set them in your CSS, also under \`:root
 2. Ask the user about style if their brief doesn't settle it: mood, colours, fonts, how much motion, what the 3D should show.
 3. Write whole files with \`propose_site_changes\` (one change set per coherent change, with a one-line summary). It returns a preview URL of the site with your changes and any template errors: open it, fix errors, and propose again if needed.
 4. Docs content goes in the space as Markdown pages (\`create_draft\` / \`suggest_edit\`), not into site files, unless it's marketing copy for a designed page.
-5. Give the user the review link. People apply change sets and publish; you can't publish.
+5. Give the user the review link. People apply change sets and publish. If the site's owner turned on "Let Claude publish" (\`agentPublish\` in \`get_site\`), pass \`publish: true\` to \`propose_site_changes\` (or call \`publish_site\`) to put the change live; it won't publish while there are template errors. Every publish is a release the owner can roll back.
 `;

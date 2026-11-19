@@ -20,6 +20,8 @@ interface SiteSummary {
   published: boolean;
   publishedAt: string | null;
   unpublishedChanges: boolean;
+  visibility: "public" | "members";
+  agentPublish: boolean;
 }
 interface SiteFile {
   path: string;
@@ -108,20 +110,35 @@ function SiteList({ canEdit, spaces }: { canEdit: boolean; spaces: Space[] }) {
   );
 }
 
+function AccessField({ value, onChange, privateSpace }: { value: "public" | "members"; onChange(v: "public" | "members"): void; privateSpace: boolean }) {
+  return (
+    <label>
+      Who can open it
+      <select value={privateSpace ? "members" : value} onChange={(e) => onChange(e.target.value as "public" | "members")} disabled={privateSpace}>
+        <option value="public">Anyone with the link</option>
+        <option value="members">Only people in its docs space (sign in with Elemnt)</option>
+      </select>
+      {privateSpace && <span className="hint">The docs space is private, so the site is too.</span>}
+    </label>
+  );
+}
+
 function NewSiteDialog({ spaces, domain, onClose }: { spaces: Space[]; domain: string | null; onClose(): void }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [space, setSpace] = useState(spaces[0]?.slug ?? "");
   const [repo, setRepo] = useState("");
   const [tagline, setTagline] = useState("");
+  const [visibility, setVisibility] = useState<"public" | "members">("public");
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const privateSpace = spaces.find((x) => x.slug === space)?.visibility === "private";
   const toast = useToast();
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      await api.post("/api/sites", { slug: slug || slugify(name), name, ...(space ? { space } : {}), ...(repo ? { repo } : {}), ...(tagline ? { tagline } : {}) });
+      await api.post("/api/sites", { slug: slug || slugify(name), name, visibility: privateSpace ? "members" : visibility, ...(space ? { space } : {}), ...(repo ? { repo } : {}), ...(tagline ? { tagline } : {}) });
       toast("Website created from the starter design. Restyle it here or ask Claude.");
       siteNavigate(slug || slugify(name));
     } catch (err) {
@@ -154,6 +171,7 @@ function NewSiteDialog({ spaces, domain, onClose }: { spaces: Space[]; domain: s
             ))}
           </select>
         </label>
+        <AccessField value={visibility} onChange={setVisibility} privateSpace={privateSpace} />
         <label>
           GitHub repo <span className="hint">(optional)</span>
           <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name" />
@@ -502,11 +520,15 @@ function SiteSettingsDialog({ site, spaces, onClose, onSaved }: { site: SiteDeta
   const [space, setSpace] = useState(spaces.find((s) => s.id === site.spaceId)?.slug ?? "");
   const [hostname, setHostname] = useState(site.hostname ?? "");
   const [repo, setRepo] = useState(site.repo ?? "");
+  const [visibility, setVisibility] = useState(site.visibility);
+  const [agentPublish, setAgentPublish] = useState(site.agentPublish);
   const [error, setError] = useState<string>();
+  const privateSpace = spaces.find((x) => x.slug === space)?.visibility === "private";
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await api.patch(`/api/sites/${site.slug}`, { name, space: space || null, hostname: hostname || null, repo: repo || null });
+      const access = { ...(privateSpace || visibility !== site.visibility ? { visibility: privateSpace ? "members" : visibility } : {}), ...(agentPublish !== site.agentPublish ? { agentPublish } : {}) };
+      await api.patch(`/api/sites/${site.slug}`, { name, space: space || null, hostname: hostname || null, repo: repo || null, ...access });
       onSaved();
       onClose();
     } catch (err) {
@@ -540,6 +562,11 @@ function SiteSettingsDialog({ site, spaces, onClose, onSaved }: { site: SiteDeta
           <input value={hostname} onChange={(e) => setHostname(e.target.value)} placeholder="www.example.com" />
           <span className="hint">Point a CNAME at this server first. Leave empty to use {site.url?.replace(/^https?:\/\//, "")}.</span>
         </label>
+        <AccessField value={visibility} onChange={setVisibility} privateSpace={privateSpace} />
+        <label className="row">
+          <input type="checkbox" checked={agentPublish} onChange={(e) => setAgentPublish(e.target.checked)} /> Let Claude publish changes
+        </label>
+        <span className="hint">When on, Claude can put its site changes live over MCP without waiting for you. Every publish is kept under Releases, so you can roll back. Docs pages still need your OK.</span>
         {error && <p className="form-error">{error}</p>}
         <div className="form-actions">
           <button type="button" className="btn" onClick={onClose}>
