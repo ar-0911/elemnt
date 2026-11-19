@@ -1,0 +1,62 @@
+# Elemnt, self-hosted. Usually set up by install.sh, which writes .env next to this file.
+#   docker compose up -d                       start (or apply changes to .env)
+#   docker compose pull && docker compose up -d   upgrade
+# With COMPOSE_PROFILES=https in .env, Caddy serves HTTPS on ports 80 and 443 and gets
+# certificates on demand for the app, the widget sandbox and every published website.
+name: elemnt
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: elemnt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run install.sh or set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: elemnt
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U elemnt"]
+      interval: 5s
+      retries: 10
+
+  server:
+    image: ${ELEMNT_IMAGE:-ghcr.io/ar-0911/elemnt}:${ELEMNT_VERSION:-latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://elemnt:${POSTGRES_PASSWORD}@postgres:5432/elemnt
+      ELEMNT_BLOB_DIR: /data/blobs
+    ports:
+      # Local installs open http://localhost:8787. Behind Caddy this stays on loopback.
+      - "${ELEMNT_BIND:-127.0.0.1}:8787:8787"
+    volumes:
+      - blobs:/data/blobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8787/healthz"]
+      interval: 15s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [https]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - server
+
+volumes:
+  pgdata:
+  blobs:
+  caddy_data:
+  caddy_config:

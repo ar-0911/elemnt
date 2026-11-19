@@ -78,7 +78,7 @@ ${o.signupOpen ? `<p class="switch">New here? <a href="/signup${o.next !== "/" ?
 
 export function signupPage(
   nonce: string,
-  o: { next: string; invite?: string; values?: Record<string, string>; errors?: Errors; error?: string; firstAccount: boolean; role?: string; workspaceName?: string; blocked?: string },
+  o: { next: string; invite?: string; setup?: string; values?: Record<string, string>; errors?: Errors; error?: string; firstAccount: boolean; role?: string; workspaceName?: string; blocked?: string },
 ) {
   const e = o.errors ?? {};
   const val = o.values ?? {};
@@ -93,7 +93,7 @@ export function signupPage(
     "Create an account",
     `<h1>${heading}</h1><p class="lede">${lede}</p>${alert(o.error)}
 <form method="post" action="/signup" novalidate>
-<input type="hidden" name="next" value="${v(o.next)}">${o.invite ? `<input type="hidden" name="invite" value="${v(o.invite)}">` : ""}
+<input type="hidden" name="next" value="${v(o.next)}">${o.invite ? `<input type="hidden" name="invite" value="${v(o.invite)}">` : ""}${o.setup ? `<input type="hidden" name="setup" value="${v(o.setup)}">` : ""}
 <label for="name">Your name <span class="hint">Shown on comments and history.</span><input id="name" name="name" autocomplete="name" value="${v(val.name)}" autofocus></label>
 <label for="username">Username<input id="username" name="username" autocomplete="username" required minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_\\-]{2,29}" value="${v(val.username)}"${inv(e, "username")} autocapitalize="none" spellcheck="false">${err(e, "username") || `<span class="hint">3 to 30 letters, digits, - or _.</span>`}</label>
 <label for="email">Email<input id="email" name="email" type="email" autocomplete="email" required value="${v(val.email)}"${inv(e, "email")}>${err(e, "email")}</label>

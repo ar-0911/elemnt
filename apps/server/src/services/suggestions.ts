@@ -4,7 +4,7 @@ import { suggestions, users } from "../db/schema.js";
 import { sha256 } from "../lib/crypto.js";
 import { newId } from "../lib/ids.js";
 import { HttpError } from "./errors.js";
-import { getPage, headRevisionId, readRevision, updatePage, type PageDeps } from "./pages.js";
+import { agentPublishDraft, assertAgentPublish, draftIsAgents, getPage, headRevisionId, PERSON_DRAFT, readRevision, updatePage, type PageDeps } from "./pages.js";
 
 type Origin = (typeof suggestions.$inferSelect)["origin"];
 
@@ -65,7 +65,7 @@ export async function getSuggestion(deps: PageDeps, id: string) {
  * the current source: a three-way merge that refuses with 409 when the same
  * lines were edited on both sides.
  */
-export async function acceptSuggestion(deps: PageDeps, input: { id: string; userId: string; hunks?: number[] }) {
+export async function acceptSuggestion(deps: PageDeps, input: { id: string; userId: string; hunks?: number[]; byAgent?: boolean }) {
   const { s, base, patch } = await load(deps, input.id);
   if (s.status !== "open") throw new HttpError(409, `This suggestion was already ${s.status}.`);
   const chosen: StructuredPatch = { ...patch, hunks: input.hunks ? patch.hunks.filter((_, i) => input.hunks!.includes(i)) : patch.hunks };
@@ -78,12 +78,29 @@ export async function acceptSuggestion(deps: PageDeps, input: { id: string; user
   if (merged === false) {
     throw new HttpError(409, "The page changed in the same places since this suggestion was written. Ask for a fresh suggestion.", { currentRevisionId: head });
   }
-  const saved = await updatePage(deps, { pageId: s.pageId, source: merged, baseRevisionId: head, authorId: input.userId, message: `Accepted suggestion: ${s.summary}`, publish: false });
+  const saved = await updatePage(deps, { pageId: s.pageId, source: merged, baseRevisionId: head, authorId: input.userId, message: `Accepted suggestion: ${s.summary}`, publish: false, byAgent: input.byAgent ?? false });
   await deps.db
     .update(suggestions)
     .set({ status: "accepted", decidedBy: input.userId, decidedAt: new Date(), appliedRevisionId: saved.revisionId })
     .where(and(eq(suggestions.id, s.id), eq(suggestions.status, "open")));
   return { ...saved, source: merged, partial: chosen.hunks.length < patch.hunks.length };
+}
+
+/**
+ * Claude applying and publishing its own suggestion, where the space lets it.
+ * Refuses (and leaves the suggestion open) when a person has a draft going.
+ */
+export async function agentAcceptSuggestion(deps: PageDeps, input: { id: string; userId: string; space: { id: string; slug: string; agentPublish: boolean } }) {
+  assertAgentPublish(input.space);
+  const [s] = await deps.db.select().from(suggestions).where(eq(suggestions.id, input.id));
+  if (!s) throw new HttpError(404, "Suggestion not found.");
+  if (s.origin !== "mcp") throw new HttpError(403, "Claude can only accept suggestions it made over MCP. A person reviews the others.");
+  const page = await getPage(deps.db, s.pageId);
+  if (page.spaceId !== input.space.id) throw new HttpError(404, "Suggestion not found.");
+  if (!(await draftIsAgents(deps.db, page))) throw new HttpError(409, PERSON_DRAFT);
+  const saved = await acceptSuggestion(deps, { id: s.id, userId: input.userId, byAgent: true });
+  const published = await agentPublishDraft(deps, { space: input.space, pageId: s.pageId, userId: input.userId });
+  return { ...saved, published: true, revisionId: published.revisionId };
 }
 
 export async function rejectSuggestion(deps: Pick<PageDeps, "db">, input: { id: string; userId: string }) {

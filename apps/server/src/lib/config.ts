@@ -47,6 +47,12 @@ const schema = z.object({
    * the server creates it with this owner and prints their API token once.
    */
   ELEMNT_OWNER_EMAIL: z.string().email().optional(),
+  /**
+   * Guards the very first sign-up on a server that's reachable from the
+   * internet: until the workspace exists, /signup only works with
+   * ?setup=<this code>. The installer generates one and prints the link.
+   */
+  ELEMNT_SETUP_CODE: z.string().min(16).optional(),
   PORT: z.coerce.number().int().default(8787),
   /** Optional server-wide Anthropic key; a workspace's own key (Settings) takes precedence. */
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -68,6 +74,8 @@ export interface Config {
   workspaceSlug: string;
   /** Anyone may sign up (as a viewer), not only people with an invite link. */
   signupOpen?: boolean;
+  /** Needed to create the first account; see ELEMNT_SETUP_CODE. */
+  setupCode?: string;
   secretKey: string;
   /** Origin for sandboxed frames; see ELEMNT_SANDBOX_URL. */
   sandboxUrl?: string;
@@ -112,6 +120,7 @@ export function configFromEnv(env: Env): Config {
     fonts: env.ELEMNT_FONTS === "google",
     workspaceSlug: env.ELEMNT_WORKSPACE,
     signupOpen: env.ELEMNT_SIGNUP === "open",
+    ...(env.ELEMNT_SETUP_CODE ? { setupCode: env.ELEMNT_SETUP_CODE } : {}),
     secretKey: env.ELEMNT_SECRET_KEY,
     github: {
       ...(env.GITHUB_APP_ID ? { appId: env.GITHUB_APP_ID } : {}),

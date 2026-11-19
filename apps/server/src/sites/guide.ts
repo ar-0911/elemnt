@@ -99,5 +99,5 @@ A site is public by default. With visibility \`members\`, visitors sign in with 
 2. Ask the user about style if their brief doesn't settle it: mood, colours, fonts, how much motion, what the 3D should show.
 3. Write whole files with \`propose_site_changes\` (one change set per coherent change, with a one-line summary). It returns a preview URL of the site with your changes and any template errors: open it, fix errors, and propose again if needed.
 4. Docs content goes in the space as Markdown pages (\`create_draft\` / \`suggest_edit\`), not into site files, unless it's marketing copy for a designed page.
-5. Give the user the review link. People apply change sets and publish. If the site's owner turned on "Let Claude publish" (\`agentPublish\` in \`get_site\`), pass \`publish: true\` to \`propose_site_changes\` (or call \`publish_site\`) to put the change live; it won't publish while there are template errors. Every publish is a release the owner can roll back.
+5. Give the user the review link. People apply change sets and publish. If the site's owner turned on "Let Claude publish" on the site or on its docs space (\`agentPublish\` in \`get_site\`), pass \`publish: true\` to \`propose_site_changes\` (or call \`publish_site\`) to put the change live; it won't publish while there are template errors. Every publish is a release the owner can roll back.
 `;

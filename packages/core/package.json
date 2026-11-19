@@ -1,6 +1,7 @@
 {
   "name": "@elemnt/core",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "Elemnt source parser and compilers: one Markdown source, interactive HTML for people, plain Markdown for agents.",
   "type": "module",
   "main": "./dist/index.js",

@@ -17,6 +17,8 @@ COPY apps/web apps/web
 RUN pnpm -r build && pnpm --filter @elemnt/server deploy --prod --legacy /out
 
 FROM node:22-alpine
+LABEL org.opencontainers.image.source="https://github.com/ar-0911/elemnt" \
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /out ./

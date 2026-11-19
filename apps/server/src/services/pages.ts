@@ -106,7 +106,7 @@ export async function getPage(db: Db, pageId: string) {
   return page;
 }
 
-export async function createPage(deps: PageDeps, input: { spaceId: string; path: string; source: string; authorId: string; message?: string; draft?: boolean }) {
+export async function createPage(deps: PageDeps, input: { spaceId: string; path: string; source: string; authorId: string; message?: string; draft?: boolean; byAgent?: boolean }) {
   const path = normalizePath(input.path);
   if (await findPage(deps.db, input.spaceId, path)) throw new HttpError(409, `A page already exists at ${path}.`);
 
@@ -123,7 +123,7 @@ export async function createPage(deps: PageDeps, input: { spaceId: string; path:
 
   await deps.db.transaction(async (tx) => {
     await tx.insert(pages).values({ id: pageId, spaceId: input.spaceId, parentId: parent?.id ?? null, path, title, summary });
-    await tx.insert(revisions).values({ id: revisionId, pageId, parentRevisionId: null, ...hashes, title, summary, style, authorId: input.authorId, message: input.message ?? null });
+    await tx.insert(revisions).values({ id: revisionId, pageId, parentRevisionId: null, ...hashes, title, summary, style, authorId: input.authorId, message: input.message ?? null, byAgent: input.byAgent ?? false });
     await tx
       .update(pages)
       .set(input.draft ? { draftRevisionId: revisionId } : { publishedRevisionId: revisionId, searchText: searchTextFrom(result.markdown) })
@@ -154,7 +154,7 @@ const STALE = "This page changed since you opened it. Reload to get the latest v
  */
 export async function updatePage(
   deps: PageDeps,
-  input: { pageId: string; source: string; baseRevisionId: string; authorId: string; message?: string; publish?: boolean },
+  input: { pageId: string; source: string; baseRevisionId: string; authorId: string; message?: string; publish?: boolean; byAgent?: boolean },
 ) {
   const page = await getPage(deps.db, input.pageId);
   assertNotLockedByOther(page, input.authorId);
@@ -168,7 +168,7 @@ export async function updatePage(
   const style = result.frontmatter.style ?? null;
 
   await deps.db.transaction(async (tx) => {
-    await tx.insert(revisions).values({ id: revisionId, pageId: page.id, parentRevisionId: input.baseRevisionId, ...hashes, title, summary, style, authorId: input.authorId, message: input.message ?? null });
+    await tx.insert(revisions).values({ id: revisionId, pageId: page.id, parentRevisionId: input.baseRevisionId, ...hashes, title, summary, style, authorId: input.authorId, message: input.message ?? null, byAgent: input.byAgent ?? false });
     const set = publish
       ? { publishedRevisionId: revisionId, draftRevisionId: null, title, summary, searchText: searchTextFrom(result.markdown), updatedAt: new Date() }
       : { draftRevisionId: revisionId, updatedAt: new Date() };
@@ -193,6 +193,36 @@ export async function publishDraft(deps: PageDeps, input: { pageId: string; user
     .set({ publishedRevisionId: page.draftRevisionId, draftRevisionId: null, title: rev?.title ?? page.title, summary: rev?.summary ?? null, searchText: searchTextFrom(markdown), updatedAt: new Date() })
     .where(and(eq(pages.id, page.id), eq(pages.draftRevisionId, page.draftRevisionId)));
   return { pageId: page.id, revisionId: page.draftRevisionId };
+}
+
+// ---------- Claude publishing on its own ----------
+
+/** Throws unless an admin turned on "Let Claude publish" for this space. */
+export function assertAgentPublish(space: { slug: string; agentPublish: boolean }) {
+  if (!space.agentPublish) {
+    throw new HttpError(403, `Claude can't publish in "${space.slug}" on its own. An admin can turn on "Let Claude publish" in the space's options menu; until then a person reviews and publishes.`);
+  }
+}
+
+/**
+ * Whether the page's draft, if any, is Claude's own. A person's unpublished
+ * draft is theirs to publish, so Claude never publishes over one.
+ */
+export async function draftIsAgents(db: Db, page: { draftRevisionId: string | null }): Promise<boolean> {
+  if (!page.draftRevisionId) return true;
+  const [rev] = await db.select({ byAgent: revisions.byAgent }).from(revisions).where(eq(revisions.id, page.draftRevisionId));
+  return Boolean(rev?.byAgent);
+}
+
+export const PERSON_DRAFT = "This page has an unpublished draft written by a person, so Claude won't publish it. Your change was left for review instead.";
+
+/** Publishes Claude's own draft of a page, in a space where Claude may publish. */
+export async function agentPublishDraft(deps: PageDeps, input: { space: { slug: string; agentPublish: boolean }; pageId: string; userId: string }) {
+  assertAgentPublish(input.space);
+  const page = await getPage(deps.db, input.pageId);
+  if (!page.draftRevisionId) throw new HttpError(400, "There is no draft to publish.");
+  if (!(await draftIsAgents(deps.db, page))) throw new HttpError(403, "This draft was written by a person, so Claude won't publish it. A person publishes it in Elemnt.");
+  return publishDraft(deps, { pageId: page.id, userId: input.userId });
 }
 
 /** Throws the draft away; the page goes back to its published revision. */

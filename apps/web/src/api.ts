@@ -73,6 +73,8 @@ export interface Space {
   slug: string;
   name: string;
   visibility: "private" | "workspace" | "public";
+  /** Claude may publish its own pages, suggestions and this space's websites. */
+  agentPublish?: boolean;
 }
 
 export interface TreePage {

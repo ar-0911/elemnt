@@ -107,6 +107,12 @@ export const spaces = pgTable(
      */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     deletedBy: text("deleted_by").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * "Let Claude publish": an admin lets Claude, over MCP, publish its own
+     * pages and suggestions here and publish the websites that show this space.
+     * Off by default; everything Claude does is still a revision you can restore.
+     */
+    agentPublish: boolean("agent_publish").notNull().default(false),
   },
   (t) => [uniqueIndex("spaces_workspace_slug").on(t.workspaceId, t.slug)],
 );
@@ -211,6 +217,8 @@ export const revisions = pgTable(
     style: jsonb("style").$type<PageStyle>(),
     authorId: text("author_id").references(() => users.id, { onDelete: "set null" }),
     message: text("message"),
+    /** Written by Claude over MCP. Claude may only publish drafts it wrote itself. */
+    byAgent: boolean("by_agent").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [index("revisions_page").on(t.pageId, t.createdAt)],
