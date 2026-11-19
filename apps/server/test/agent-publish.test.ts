@@ -26,7 +26,7 @@ async function pageState(path: string) {
     source: string;
     headRevisionId: string;
   };
-  return { id: pg.id, ...body.page, source: body.source, head: body.headRevisionId };
+  return { ...body.page, id: pg.id, source: body.source, head: body.headRevisionId };
 }
 
 const turnOn = (token = t.ownerToken, on = true) => t.call("/api/spaces/docs", { method: "PATCH", token, json: { agentPublish: on } });
