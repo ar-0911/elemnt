@@ -53,6 +53,16 @@ const schema = z.object({
    * ?setup=<this code>. The installer generates one and prints the link.
    */
   ELEMNT_SETUP_CODE: z.string().min(16).optional(),
+  /**
+   * Hosted mode: this server hosts many workspaces, each at <slug>.<this domain>.
+   * ELEMNT_PUBLIC_URL is then the domain itself (https://<domain>), where people
+   * make an account and request a workspace. See docs/hosted.md.
+   */
+  ELEMNT_HOSTED_DOMAIN: z.string().regex(/^[a-z0-9.-]+$/i).optional(),
+  /** Hosted mode: emails of the people who run the server (the /admin page), comma-separated. */
+  ELEMNT_OPERATORS: z.string().optional(),
+  /** Hosted mode: "on" makes new workspaces wait for an operator's approval. Off by default: they go live at once. */
+  ELEMNT_HOSTED_APPROVAL: z.enum(["on", "off"]).default("off"),
   PORT: z.coerce.number().int().default(8787),
   /** Optional server-wide Anthropic key; a workspace's own key (Settings) takes precedence. */
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -76,6 +86,11 @@ export interface Config {
   signupOpen?: boolean;
   /** Needed to create the first account; see ELEMNT_SETUP_CODE. */
   setupCode?: string;
+  /**
+   * Hosted mode (ELEMNT_HOSTED_DOMAIN). On the main server config, `domain`
+   * is set; on a workspace's own app, `home` is the main address to link back to.
+   */
+  hosted?: { domain: string; operators: string[]; home: string; approval: boolean };
   secretKey: string;
   /** Origin for sandboxed frames; see ELEMNT_SANDBOX_URL. */
   sandboxUrl?: string;
@@ -121,6 +136,16 @@ export function configFromEnv(env: Env): Config {
     workspaceSlug: env.ELEMNT_WORKSPACE,
     signupOpen: env.ELEMNT_SIGNUP === "open",
     ...(env.ELEMNT_SETUP_CODE ? { setupCode: env.ELEMNT_SETUP_CODE } : {}),
+    ...(env.ELEMNT_HOSTED_DOMAIN
+      ? {
+          hosted: {
+            domain: env.ELEMNT_HOSTED_DOMAIN.toLowerCase(),
+            operators: (env.ELEMNT_OPERATORS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
+            home: publicUrl,
+            approval: env.ELEMNT_HOSTED_APPROVAL === "on",
+          },
+        }
+      : {}),
     secretKey: env.ELEMNT_SECRET_KEY,
     github: {
       ...(env.GITHUB_APP_ID ? { appId: env.GITHUB_APP_ID } : {}),

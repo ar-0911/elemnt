@@ -89,6 +89,14 @@ Colour tokens Elemnt's components read (set them in your CSS, also under \`:root
 - Fonts: load from Google Fonts in the layout's \`<head>\`.
 - System architecture: draw real infrastructure in 3D (zones as translucent platforms for VPCs, subnets and on-prem; services as recognisable shapes such as racks, gateways, databases and firewalls; links as arcs with packets moving along them; tunnels as glowing tubes), not floating boxes and arrows. In docs pages use \`:::architecture\` (see the authoring guide), which renders a proper 2D architecture diagram.
 
+## Hub sites
+
+A hub is a site that leads to other spaces or sites (a front page, a projects portfolio, a team index). It is an entry point, not a project, so:
+
+- Build every list from a loop over data, never hand-placed cards: \`elemnt.sites\` for sites, or an array in \`site.json\` \`data\` when you need extra fields. Adding a space or site must be one data entry (or nothing at all), never a redesign.
+- Design for 1 entry and for 50: grids that wrap, grouping or paging when the list grows, no fixed slot counts, and 3D scenes that place items by index rather than at hand-picked positions.
+- Leave hubs out of project lists, including the "more projects" lists on project sites (filter them by slug).
+
 ## Who can open a site
 
 A site is public by default. With visibility \`members\`, visitors sign in with Elemnt and only people who can read the site's docs space get in (owners always can). A private space can only back a members site. Members sites are never cached by shared caches or indexed.
