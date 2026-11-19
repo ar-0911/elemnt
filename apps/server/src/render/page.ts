@@ -63,6 +63,8 @@ export interface ShellInput {
   repo?: { repo: string; pinnedCommit: string; checkedCommit: string | null; behindBy: number };
   /** Links to the space's other pages: the header menu and the "Keep reading" cards (render/browse.ts). */
   browse?: { menu: string; more: string };
+  /** The same page on the space's published website, when there is one this reader can open. */
+  website?: { url: string; name: string };
 }
 
 function levelNav(p: ShellInput): string {
@@ -231,6 +233,7 @@ ${lookHead(p.nonce, p.look)}
     ${levelNav(p)}
     <a class="btn" href="${escapeHtml(pageHref)}?view=present${p.level ? `&amp;level=${escapeHtml(p.level)}` : ""}">Present</a>
     <nav class="toggle" aria-label="View"><a href="${escapeHtml(pageViewHref)}"${p.view === "page" ? ' aria-current="page"' : ""}>Page</a><a href="${escapeHtml(mdViewHref)}"${p.view === "markdown" ? ' aria-current="page"' : ""}>Markdown</a></nav>
+    ${p.website ? `<a class="btn" href="${escapeHtml(p.website.url)}" title="Open this page on ${escapeHtml(p.website.name)}">Website ↗</a>` : ""}
     <button class="btn theme-toggle" id="theme-toggle" type="button" aria-label="Toggle dark mode">☾</button>
     ${p.editUrl ? `<a class="btn" href="${escapeHtml(p.editUrl)}">Edit</a>` : ""}
     ${share}

@@ -5,7 +5,7 @@ import type { Db } from "../db/index.js";
 import { pages, siteChangesets, siteReleases, sites, spaces, type SiteFileChange } from "../db/schema.js";
 import type { BlobStore } from "../lib/blobs.js";
 import { newId } from "../lib/ids.js";
-import { siteRenderer, type Diagnostic, type DocPage, type SiteRef, type SiteSnapshot } from "../sites/render.js";
+import { docRoute, readConfig, siteRenderer, type Diagnostic, type DocPage, type SiteConfig, type SiteRef, type SiteSnapshot } from "../sites/render.js";
 import { starterFiles } from "../sites/starter.js";
 import { EMPTY_TREE, loadTree, normalizeFilePath, readFileText, saveTree, writeFiles, type Tree } from "../sites/tree.js";
 import { HttpError } from "./errors.js";
@@ -410,6 +410,61 @@ export async function canOpenSite(db: Db, viewer: Viewer | undefined, site: Pick
   if (!site.spaceId) return viewer.role === "owner" || viewer.role === "admin";
   const [space] = await db.select({ id: spaces.id, visibility: spaces.visibility, deletedAt: spaces.deletedAt }).from(spaces).where(eq(spaces.id, site.spaceId));
   return Boolean(space && canReadSpace(viewer, space));
+}
+
+// ---------- from a docs page to its website ----------
+
+/** site.json of a published tree. Trees are content-addressed, so a hash always reads the same. */
+const configCache = new Map<string, SiteConfig>();
+async function publishedConfig(blobs: BlobStore, treeHash: string): Promise<SiteConfig> {
+  const hit = configCache.get(treeHash);
+  if (hit) return hit;
+  const { config } = await readConfig(blobs, await loadTree(blobs, treeHash));
+  if (configCache.size > 200) configCache.clear();
+  configCache.set(treeHash, config);
+  return config;
+}
+
+/**
+ * Where a space's page appears on a published website, so the reader can link
+ * across. Only sites this viewer may open count. When several sites show the
+ * page (a hub for the whole space and a site for one branch of it), the one
+ * rooted closest to the page wins.
+ */
+export async function websiteForPage(
+  deps: Pick<SitesDeps, "db" | "blobs" | "sitesDomain" | "publicUrl">,
+  viewer: Viewer | undefined,
+  spaceId: string,
+  path: string,
+): Promise<{ url: string; name: string } | undefined> {
+  const rows = await deps.db.select().from(sites).where(and(eq(sites.spaceId, spaceId), isNotNull(sites.publishedTree))).orderBy(sites.slug);
+  let best: { url: string; name: string; depth: number } | undefined;
+  for (const site of rows) {
+    const base = siteUrl(deps, site);
+    if (!base || !(await canOpenSite(deps.db, viewer, site))) continue;
+    const config = await publishedConfig(deps.blobs, site.publishedTree!);
+    const root = config.docs.root;
+    const rel = !root ? path : path === root ? "index" : path.startsWith(`${root}/`) ? path.slice(root.length + 1) : undefined;
+    if (rel === undefined) continue;
+    const depth = root ? root.split("/").length : 0;
+    if (!best || depth > best.depth) best = { url: base + docRoute(config, rel), name: site.name, depth };
+  }
+  return best && { url: best.url, name: best.name };
+}
+
+/** The website for a whole space: a published site that shows all of it (no docs root). */
+export async function websiteForSpace(
+  deps: Pick<SitesDeps, "db" | "blobs" | "sitesDomain" | "publicUrl">,
+  viewer: Viewer | undefined,
+  spaceId: string,
+): Promise<{ url: string; name: string } | undefined> {
+  const rows = await deps.db.select().from(sites).where(and(eq(sites.spaceId, spaceId), isNotNull(sites.publishedTree))).orderBy(sites.slug);
+  for (const site of rows) {
+    const base = siteUrl(deps, site);
+    if (!base || !(await canOpenSite(deps.db, viewer, site))) continue;
+    if (!(await publishedConfig(deps.blobs, site.publishedTree!)).docs.root) return { url: `${base}/`, name: site.name };
+  }
+  return undefined;
 }
 
 // ---------- hostnames ----------

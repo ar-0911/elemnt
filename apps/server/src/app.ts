@@ -1509,7 +1509,8 @@ export function createApp(deps: AppDeps) {
     const org = await themeSvc.getOrgTheme(deps.db, c.get("workspaceId"));
     const look = browseLook(org);
     const list = await browseSvc.publishedPages(deps.db, space.id, org);
-    return html(c, renderSpaceIndex({ nonce: c.get("nonce"), publicUrl: deps.config.publicUrl, space, pages: list, look }));
+    const website = await sitesSvc.websiteForSpace(sitesDeps, c.get("viewer"), space.id);
+    return html(c, renderSpaceIndex({ nonce: c.get("nonce"), publicUrl: deps.config.publicUrl, space, pages: list, look, ...(website ? { website } : {}) }));
   });
 
   /** The page's look: its revision's style over the workspace theme. */
@@ -1577,6 +1578,7 @@ export function createApp(deps: AppDeps) {
     const levels = await levelsSvc.approvedLevels(deps, page.id);
     const siblings = await browseSvc.publishedPages(deps.db, space.id, await themeSvc.getOrgTheme(deps.db, c.get("workspaceId")));
     const browse = { menu: pagesMenu(space, siblings, path), more: keepReading(space, browseSvc.neighbours(siblings, path).more) };
+    const website = await sitesSvc.websiteForPage(sitesDeps, viewer, space.id, path);
     return html(
       c,
       renderShell({
@@ -1596,6 +1598,7 @@ export function createApp(deps: AppDeps) {
         ask: await askEnabled(c, isPublic),
         levels,
         browse,
+        ...(website ? { website } : {}),
         ...(level ? { level: level.level } : {}),
         ...(hasRole(viewer, "editor") ? { editUrl: `/app/${space.slug}/${path}` } : {}),
         ...(isPublic

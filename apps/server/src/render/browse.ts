@@ -51,6 +51,8 @@ export interface SpaceIndexInput {
   space: { slug: string; name: string; visibility: string };
   pages: BrowsePage[];
   look: Look;
+  /** The space's published website, when there is one this reader can open. */
+  website?: { url: string; name: string };
 }
 
 /** A space's landing page: a hero, then every published page as a card. */
@@ -70,7 +72,7 @@ export function renderSpaceIndex(p: SpaceIndexInput): string {
   ].join("");
   const eyebrow = p.space.visibility === "public" ? "Public space" : "Space";
   const actions = first
-    ? `<p class="elemnt-hero-actions"><a href="${pageHref(p.space.slug, first.path)}">Start with ${escapeHtml(first.title)}</a><a href="${spaceHref(p.space.slug)}/llms.txt">llms.txt for agents</a></p>`
+    ? `<p class="elemnt-hero-actions"><a href="${pageHref(p.space.slug, first.path)}">Start with ${escapeHtml(first.title)}</a>${p.website ? `<a href="${escapeHtml(p.website.url)}">Visit the website ↗</a>` : ""}<a href="${spaceHref(p.space.slug)}/llms.txt">llms.txt for agents</a></p>`
     : "";
   const cards = first
     ? `<h2 class="eb-section">${p.pages.length === 1 ? "The page" : "All pages"}</h2><div class="eb-grid">${pageCard(p.space.slug, first, p.pages.length >= 4)}${rest.map((x) => pageCard(p.space.slug, x)).join("")}</div>`

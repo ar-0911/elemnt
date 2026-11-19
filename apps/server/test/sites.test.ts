@@ -117,6 +117,37 @@ describe("project websites", () => {
     expect(await (await site("acme", "/llms.txt")).text()).toContain(`(https://acme.${SITES_DOMAIN}/docs/flags.md)`);
   });
 
+  it("links each docs page to the same page on its website, closest site first", async () => {
+    await makeSite();
+    await page("ares", "# Ares\n\nAgents.\n");
+    await page("ares/flags", "# Flags\n\nAll flags.\n");
+    await page("braid", "# Braid\n\nWeaving.\n");
+    // Nothing published yet: no link.
+    expect(await (await t.call("/s/acme-docs/braid")).text()).not.toContain("Website ↗");
+    await publish();
+    const braid = await (await t.call("/s/acme-docs/braid")).text();
+    expect(braid).toContain(`href="https://acme.${SITES_DOMAIN}/docs/braid"`);
+    expect(braid).toContain("Website ↗");
+    expect(await (await t.call("/s/acme-docs")).text()).toContain(`href="https://acme.${SITES_DOMAIN}/"`);
+    // A second site showing only the ares branch wins for pages under it.
+    expect((await t.call("/api/sites", { method: "POST", token: t.ownerToken, json: { slug: "ares", name: "Ares", space: "acme-docs" } })).status).toBe(201);
+    const cfg = JSON.parse(((await (await t.call("/api/sites/ares/files/site.json", { token: t.ownerToken })).json()) as { content: string }).content) as { docs?: Record<string, unknown> };
+    cfg.docs = { ...cfg.docs, root: "ares" };
+    expect((await t.call("/api/sites/ares/files", { method: "PUT", token: t.ownerToken, json: { files: [{ path: "site.json", content: JSON.stringify(cfg) }] } })).status).toBe(200);
+    expect((await t.call("/api/sites/ares/publish", { method: "POST", token: t.ownerToken, json: {} })).status).toBe(200);
+    expect(await (await t.call("/s/acme-docs/ares/flags")).text()).toContain(`href="https://ares.${SITES_DOMAIN}/docs/flags"`);
+    expect(await (await t.call("/s/acme-docs/ares")).text()).toContain(`href="https://ares.${SITES_DOMAIN}/docs"`);
+    expect(await (await t.call("/s/acme-docs/braid")).text()).toContain(`href="https://acme.${SITES_DOMAIN}/docs/braid"`);
+  });
+
+  it("only links to a members-only website for readers who can open it", async () => {
+    await makeSite({ visibility: "members" });
+    await page("braid", "# Braid\n\nWeaving.\n");
+    await publish();
+    expect(await (await t.call("/s/acme-docs/braid")).text()).not.toContain(`acme.${SITES_DOMAIN}`);
+    expect(await (await t.call("/s/acme-docs/braid", { token: t.ownerToken })).text()).toContain(`href="https://acme.${SITES_DOMAIN}/docs/braid"`);
+  });
+
   it("keeps docs current: a page published later shows up without republishing the site", async () => {
     await makeSite();
     await publish();

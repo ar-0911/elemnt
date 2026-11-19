@@ -148,7 +148,7 @@ export function designedRoutes(tree: Tree): Map<string, string> {
   return out;
 }
 
-const docRoute = (config: SiteConfig, path: string) => (path === "index" ? config.docs.prefix || "/" : `${config.docs.prefix}/${path}`.replace(/^\/\//, "/"));
+export const docRoute = (config: SiteConfig, path: string) => (path === "index" ? config.docs.prefix || "/" : `${config.docs.prefix}/${path}`.replace(/^\/\//, "/"));
 
 export function resolve(snapshot: SiteSnapshot, config: SiteConfig, pathname: string): Resolved | undefined {
   const path = decodeURIComponent(pathname).replace(/\/+$/, "") || "/";
