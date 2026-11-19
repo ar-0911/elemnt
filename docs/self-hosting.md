@@ -134,6 +134,7 @@ If files go to S3 or R2 (`ELEMNT_S3_*`), turn on versioning on the bucket instea
 - **From source:** clone the repo and run `docker compose up -d` at its root. This builds the image locally.
 - **Cloudflare Containers with R2 and Neon:** see [deploy/cloudflare](../deploy/cloudflare/README.md). This is how docs.adityapoc.xyz runs.
 - **AWS App Runner with RDS and S3:** see [deploy/aws](../deploy/aws/README.md).
+- **For other people, one workspace each at `<name>.yourdomain`:** see [hosted mode](hosted.md).
 
 ## Troubleshooting
 

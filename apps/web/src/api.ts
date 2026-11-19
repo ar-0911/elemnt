@@ -55,6 +55,8 @@ export interface Me {
   style: PageStyle | null;
   /** Whether page styles may load Google Fonts. */
   fonts: boolean;
+  /** On a hosted server: the main address that lists all your workspaces. */
+  hostedHome?: string | null;
 }
 
 let me: Promise<Me> | undefined;

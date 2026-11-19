@@ -92,6 +92,13 @@
       "when": 1795089250026,
       "tag": "0012_agent_publish",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795092380268,
+      "tag": "0013_hosted",
+      "breakpoints": true
     }
   ]
 }

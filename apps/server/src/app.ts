@@ -41,7 +41,8 @@ import { createRequire } from "node:module";
 import { workspaces } from "./db/schema.js";
 import { eq, sql } from "drizzle-orm";
 import { pageStats, recordView } from "./services/views.js";
-import { canReadSpace, hasRole, viewerForToken, type Viewer } from "./services/workspace.js";
+import { canReadSpace, hasRole, viewerForToken, viewerForUser, type Viewer } from "./services/workspace.js";
+import * as hostedSvc from "./services/hosted.js";
 import * as accounts from "./services/accounts.js";
 import * as spaceAccess from "./services/space-access.js";
 import * as spacesSvc from "./services/spaces.js";
@@ -121,6 +122,7 @@ export function createApp(deps: AppDeps) {
     publicUrl: deps.config.publicUrl,
     ...(deps.config.sitesDomain ? { sitesDomain: deps.config.sitesDomain } : {}),
     ...(sandboxUrl ? { sandboxUrl } : {}),
+    ...(deps.config.hosted ? { reservedDomain: deps.config.hosted.domain } : {}),
   };
   if (sandboxUrl) {
     const sandbox = sandboxApp({ db: deps.db, blobs: deps.blobs, publicUrl: deps.config.publicUrl, frameAncestors: () => sitesSvc.siteOrigins(sitesDeps) });
@@ -312,10 +314,37 @@ export function createApp(deps: AppDeps) {
     return c.redirect(to);
   });
 
+  // Hosted mode: the main address sends a signed-in person here with a one-minute code.
+  if (deps.config.hosted) {
+    const used = new Map<string, number>();
+    app.get("/hosted/enter", async (c) => {
+      const code = c.req.query("code") ?? "";
+      const userId = hostedSvc.readHandoff(deps.config.secretKey, code, deps.config.workspaceSlug);
+      const now = Date.now();
+      for (const [k, at] of used) if (now - at > 120_000) used.delete(k);
+      if (!userId || used.has(code)) return c.redirect("/login");
+      used.set(code, now);
+      if (!(await viewerForUser(deps.db, c.get("workspaceId"), userId))?.role) return c.redirect("/login");
+      signIn(c, await accounts.issueSession(deps.db, userId));
+      c.header("Cache-Control", "no-store");
+      return c.redirect(c.req.query("welcome") ? "/app/?welcome=1" : "/app/");
+    });
+  }
+
   app.get("/login", async (c) => {
     if (!workspaceId) return c.redirect("/signup");
     if (c.get("viewer")?.role) return c.redirect(safeNext(c.req.query("next")));
-    return html(c, loginPage(c.get("nonce"), { next: safeNext(c.req.query("next")), signupOpen, ...(c.req.query("welcome") ? { notice: "Your password is set. Sign in with it any time." } : {}) }));
+    const invite = c.req.query("invite");
+    const offer = invite ? await accounts.inviteFor(deps.db, workspaceId, invite) : undefined;
+    return html(
+      c,
+      loginPage(c.get("nonce"), {
+        next: safeNext(c.req.query("next")),
+        signupOpen,
+        ...(c.req.query("welcome") ? { notice: "Your password is set. Sign in with it any time." } : {}),
+        ...(invite && offer ? { invite, joinAs: offer.role } : invite ? { error: "That invite link has expired or was revoked. Ask for a new one." } : {}),
+      }),
+    );
   });
 
   app.post("/login", async (c) => {
@@ -333,8 +362,14 @@ export function createApp(deps: AppDeps) {
       signIn(c, form.token.trim());
       return c.redirect(next);
     }
+    const invite = typeof form.invite === "string" && form.invite ? form.invite.slice(0, 200) : undefined;
     try {
       const { token } = await accounts.login(deps.db, identifier, String(form.password ?? ""));
+      // An existing account joining with an invite link.
+      if (invite) {
+        const session = await viewerForToken(deps.db, c.get("workspaceId"), token);
+        if (session) await accounts.acceptInvite(deps.db, c.get("workspaceId"), session.userId, invite);
+      }
       const viewer = await viewerForToken(deps.db, c.get("workspaceId"), token);
       if (!viewer?.role) {
         await accounts.endSession(deps.db, token);
@@ -344,7 +379,7 @@ export function createApp(deps: AppDeps) {
       return c.redirect(next);
     } catch (e) {
       if (!(e instanceof HttpError)) throw e;
-      return html(c, loginPage(c.get("nonce"), { next, identifier, signupOpen, error: e.message }), 401);
+      return html(c, loginPage(c.get("nonce"), { next, identifier, signupOpen, ...(invite ? { invite } : {}), error: e.message }), e.status === 403 ? 403 : 401);
     }
   });
 
@@ -458,7 +493,7 @@ export function createApp(deps: AppDeps) {
     const viewer = requireRole(c, "viewer");
     const account = await linkedin.getAccount(deps.db, viewer.userId);
     const [theme, style, profile] = await Promise.all([themeSvc.getOrgTheme(deps.db, c.get("workspaceId")), themeSvc.getUserStyle(deps.db, viewer.userId), accounts.account(deps.db, viewer.userId)]);
-    return c.json({ ...viewer, name: profile.name, username: profile.username, hasPassword: profile.hasPassword, sandboxUrl: sandboxUrl ?? null, theme, style, fonts: deps.config.fonts !== false, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
+    return c.json({ ...viewer, name: profile.name, username: profile.username, hasPassword: profile.hasPassword, sandboxUrl: sandboxUrl ?? null, hostedHome: deps.config.hosted?.home ?? null, theme, style, fonts: deps.config.fonts !== false, linkedin: account ? { connected: true, name: account.name, expiresAt: account.expiresAt } : { connected: false } });
   });
 
   app.post("/api/preview", async (c) => {

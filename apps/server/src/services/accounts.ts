@@ -90,6 +90,45 @@ export async function signup(db: Db, slug: string, open: boolean, raw: unknown) 
   });
 }
 
+/** An account on its own, with no workspace yet (hosted mode's main address). */
+export const signupSchemaForHosted = signupSchema.omit({ invite: true });
+
+export async function createAccount(db: Db, raw: unknown) {
+  const input = signupSchemaForHosted.parse(raw);
+  const passwordHash = await hashPassword(input.password);
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db;
+    const [taken] = await t
+      .select({ email: users.email, username: users.username })
+      .from(users)
+      .where(or(eq(users.email, input.email), eq(users.username, input.username)));
+    if (taken) throw new HttpError(409, taken.username === input.username ? "That username is taken. Try another." : "There's already an account with that email. Sign in instead.", { field: taken.username === input.username ? "username" : "email" });
+    const [user] = await t.insert(users).values({ id: newId("usr"), email: input.email, username: input.username, name: input.name || null, passwordHash }).returning();
+    return { user: user!, token: await issueSession(t, user!.id) };
+  });
+}
+
+/** What an invite link offers, for someone who already has an account. */
+export async function inviteFor(db: Db, workspaceId: string, code: string) {
+  const invite = await findInvite(db, workspaceId, code);
+  return invite ? { role: invite.role } : undefined;
+}
+
+/**
+ * Someone who already has an account joins with an invite link. If they're
+ * already a member, their role stays as it is.
+ */
+export async function acceptInvite(db: Db, workspaceId: string, userId: string, code: string) {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db;
+    const invite = await findInvite(t, workspaceId, code);
+    if (!invite) throw new HttpError(403, "That invite link has expired or was revoked. Ask for a new one.");
+    const added = await t.insert(members).values({ workspaceId, userId, role: invite.role }).onConflictDoNothing().returning({ role: members.role });
+    if (added.length) await t.update(invites).set({ uses: sql`${invites.uses} + 1` }).where(eq(invites.id, invite.id));
+    return { role: invite.role, joined: added.length > 0 };
+  });
+}
+
 /** Checks a username-or-email and password. Takes the same time whether or not the account exists. */
 export async function login(db: Db, identifier: string, password: string) {
   const id = identifier.trim().toLowerCase();

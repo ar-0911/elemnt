@@ -22,6 +22,8 @@ export interface SitesDeps {
   /** The app's public URL; its scheme and port carry over to site URLs. */
   publicUrl: string;
   sandboxUrl?: string;
+  /** Hosted mode: the domain whose names belong to workspaces, never to a site. */
+  reservedDomain?: string;
 }
 
 export type Site = typeof sites.$inferSelect;
@@ -150,6 +152,8 @@ export async function updateSite(
       const app = new URL(deps.publicUrl).hostname;
       const sandbox = deps.sandboxUrl ? new URL(deps.sandboxUrl).hostname : undefined;
       if (host === app || host === sandbox) throw new HttpError(400, "A site can't use the app's or the sandbox's hostname.");
+      const reserved = deps.reservedDomain;
+      if (reserved && (host === reserved || host.endsWith(`.${reserved}`))) throw new HttpError(400, `Names under ${reserved} belong to workspaces. Use a domain you own, e.g. docs.yourcompany.com.`);
       const [taken] = await deps.db.select({ id: sites.id }).from(sites).where(eq(sites.hostname, host));
       if (taken && taken.id !== site.id) throw new HttpError(409, `Another site already uses ${host}.`);
     }

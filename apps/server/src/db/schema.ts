@@ -35,6 +35,8 @@ export const workspaces = pgTable("workspaces", {
   querySources: jsonb("query_sources").$type<Record<string, QuerySource>>().notNull().default({}),
   /** Organization theme: preset, colours, fonts, notes and admin CSS for every page. */
   theme: jsonb("theme").$type<OrgTheme>(),
+  /** Hosted mode: an operator turned this workspace off. Nobody can open it until it's turned back on. */
+  suspendedAt: timestamp("suspended_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -88,6 +90,30 @@ export const invites = pgTable("invites", {
   uses: integer("uses").notNull().default(0),
   createdAt: createdAt(),
 });
+
+/**
+ * Hosted mode: someone asks for a workspace at <slug>.<hosted domain>; an
+ * operator approves it (creating the workspace, owned by the requester) or
+ * declines it.
+ */
+export const workspaceRequests = pgTable(
+  "workspace_requests",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    /** What they'll use it for, so the operator can tell real requests from spam. */
+    purpose: text("purpose").notNull(),
+    status: text("status", { enum: ["pending", "approved", "declined"] }).notNull().default("pending"),
+    workspaceId: text("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    decidedBy: text("decided_by").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    note: text("note"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("workspace_requests_status").on(t.status, t.createdAt), index("workspace_requests_user").on(t.userId)],
+);
 
 export const visibilities = ["private", "workspace", "public"] as const;
 export type Visibility = (typeof visibilities)[number];

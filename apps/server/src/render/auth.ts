@@ -40,6 +40,23 @@ summary{cursor:pointer;font-weight:600}details form{margin-top:12px}
 .role{display:inline-block;padding:1px 8px;border-radius:999px;background:var(--soft);color:var(--accent);font-weight:700;font-size:12px;text-transform:capitalize}
 ul.scopes{margin:0 0 18px;padding-left:18px;color:var(--muted)}
 .foot{margin-top:18px;text-align:center;font-size:12px;color:var(--muted)}
+.card.wide{width:min(760px,100%)}
+textarea{width:100%;min-height:84px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--fg);font:inherit;font-size:15px;resize:vertical}
+.addr{display:flex;align-items:stretch;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow:hidden}
+.addr input{border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
+.addr span{display:flex;align-items:center;padding:0 12px;color:var(--muted);font-weight:500;border-left:1px solid var(--line);white-space:nowrap}
+.addr:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)}
+.check{font-size:12px;font-weight:500;min-height:1.2em}.check.ok{color:var(--ok)}.check.bad{color:var(--danger)}
+.list{display:grid;gap:10px;margin:0 0 22px;padding:0;list-style:none}
+.list li{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:12px 14px;border:1px solid var(--line);border-radius:12px;flex-wrap:wrap}
+.list .meta{color:var(--muted);font-size:13px}
+.list form{display:flex;gap:8px}
+.btn.small{height:34px;padding:0 14px;font-size:13px;margin:0}
+.btn.danger{background:var(--danger);color:#fff}
+h2{font-size:16px;margin:26px 0 10px}
+.hero{font-size:30px;line-height:1.15;letter-spacing:-.03em;margin:0 0 10px}
+.points{margin:0 0 24px;padding-left:18px;color:var(--muted)}
+.empty{color:var(--muted);font-size:14px;margin:0 0 22px}
 `;
 
 const LOGO = `<svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#06b6d4"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#lg)"/><path d="M10 9h12M10 16h9M10 23h12M10 9v14" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/></svg>`;
@@ -49,8 +66,8 @@ const SCRIPT = `try{var t=localStorage.getItem("elemnt-theme");if(t==="light"||t
 document.querySelectorAll(".pw").forEach(function(w){var i=w.querySelector("input"),b=w.querySelector("button");b.addEventListener("click",function(){var s=i.type==="password";i.type=s?"text":"password";b.textContent=s?"Hide":"Show";b.setAttribute("aria-pressed",String(s));i.focus()})});
 var f=document.querySelector("[autofocus]");if(f)f.focus();`;
 
-export function authPage(nonce: string, title: string, body: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${escapeHtml(title)} · Elemnt</title><style>${CSS}</style></head><body><main class="card"><a class="brand" href="/">${LOGO}Elemnt</a>${body}</main><script nonce="${nonce}">${SCRIPT}</script></body></html>`;
+export function authPage(nonce: string, title: string, body: string, o: { wide?: boolean; script?: string; index?: boolean } = {}): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${o.index ? "" : `<meta name="robots" content="noindex">`}<title>${escapeHtml(title)} · Elemnt</title><style>${CSS}</style></head><body><main class="card${o.wide ? " wide" : ""}"><a class="brand" href="/">${LOGO}Elemnt</a>${body}</main><script nonce="${nonce}">${SCRIPT}${o.script ?? ""}</script></body></html>`;
 }
 
 type Errors = Partial<Record<string, string>>;
@@ -61,12 +78,15 @@ const alert = (msg?: string, ok = false) => (msg ? `<p class="alert${ok ? " ok" 
 const pw = (name: string, auto: string, e: Errors, extra = "") =>
   `<div class="pw"><input id="${name}" name="${name}" type="password" required autocomplete="${auto}"${inv(e, name)}${extra}><button type="button" aria-label="Show password" aria-pressed="false">Show</button></div>`;
 
-export function loginPage(nonce: string, o: { next: string; identifier?: string; error?: string; notice?: string; signupOpen: boolean }) {
-  const next = `<input type="hidden" name="next" value="${v(o.next)}">`;
+export function loginPage(nonce: string, o: { next: string; identifier?: string; error?: string; notice?: string; signupOpen: boolean; invite?: string; joinAs?: string }) {
+  const next = `<input type="hidden" name="next" value="${v(o.next)}">${o.invite ? `<input type="hidden" name="invite" value="${v(o.invite)}">` : ""}`;
+  const lede = o.joinAs
+    ? `Sign in with your Elemnt account to join as <span class="role">${escapeHtml(o.joinAs)}</span>.`
+    : "Sign in to write and publish your docs.";
   return authPage(
     nonce,
     "Sign in",
-    `<h1>Welcome back</h1><p class="lede">Sign in to write and publish your docs.</p>${alert(o.notice, true)}${alert(o.error)}
+    `<h1>${o.joinAs ? "Join this workspace" : "Welcome back"}</h1><p class="lede">${lede}</p>${alert(o.notice, true)}${alert(o.error)}
 <form method="post" action="/login">${next}
 <label for="identifier">Username or email<input id="identifier" name="identifier" autocomplete="username" required value="${v(o.identifier)}"${o.identifier ? "" : " autofocus"}></label>
 <label for="password">Password${pw("password", "current-password", {}, o.identifier ? " autofocus" : "")}</label>
@@ -99,7 +119,7 @@ export function signupPage(
 <label for="email">Email<input id="email" name="email" type="email" autocomplete="email" required value="${v(val.email)}"${inv(e, "email")}>${err(e, "email")}</label>
 <label for="password">Password${pw("password", "new-password", e, ' minlength="8"')}${err(e, "password") || `<span class="hint">At least 8 characters. A short sentence is easy to remember.</span>`}</label>
 <button class="btn" type="submit">${o.firstAccount ? "Create workspace" : "Create account"}</button></form>
-${o.firstAccount ? "" : `<p class="switch">Already have an account? <a href="/login">Sign in</a></p>`}`,
+${o.firstAccount ? "" : `<p class="switch">Already have an account? <a href="/login${o.invite ? `?invite=${encodeURIComponent(o.invite)}` : ""}">Sign in${o.invite ? " to join" : ""}</a></p>`}`,
   );
 }
 

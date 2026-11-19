@@ -504,6 +504,7 @@ function Shell() {
               { label: "Settings", icon: "settings", onSelect: () => setSettings("account") },
               { label: "Take the tour", icon: "compass", onSelect: () => (current ? restartTour() : pages[0] && route.space ? (navigate(route.space, pages[0].path), setTimeout(restartTour, 600)) : restartTour()) },
               { label: "Keyboard shortcuts", icon: "keyboard", hint: "?", onSelect: () => setDialog("keys") },
+              ...(me?.hostedHome ? [{ label: "All your workspaces", icon: "globe" as const, onSelect: () => void (location.href = me.hostedHome!) }] : []),
               "sep",
               { label: "Sign out", icon: "logout", onSelect: () => void signOut() },
             ]}
