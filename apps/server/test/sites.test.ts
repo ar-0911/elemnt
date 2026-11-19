@@ -258,3 +258,16 @@ describe("project websites", () => {
     expect(run.headers.get("content-security-policy")).toContain(`frame-ancestors ${PUBLIC_URL} https://*.${SITES_DOMAIN}`);
   });
 });
+
+describe("on-demand HTTPS", () => {
+  it("only vouches for hostnames this server answers", async () => {
+    const allow = async (domain: string) => (await t.app.request(`http://server:8787/internal/tls-allow?domain=${domain}`)).status;
+    expect(await allow("docs.example.com")).toBe(200);
+    expect(await allow("sandbox.example.com")).toBe(200);
+    expect(await allow("evil.example.org")).toBe(404);
+    expect(await allow(`nope.${SITES_DOMAIN}`)).toBe(404);
+    await t.call("/api/sites", { method: "POST", token: t.ownerToken, json: { slug: "rocket", name: "Rocket" } });
+    expect((await t.call("/api/sites/rocket/publish", { method: "POST", token: t.ownerToken })).status).toBe(200);
+    expect(await allow(`rocket.${SITES_DOMAIN}`)).toBe(200);
+  });
+});

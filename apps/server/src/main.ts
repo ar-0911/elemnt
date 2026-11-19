@@ -11,6 +11,9 @@ if (env.ELEMNT_OWNER_EMAIL) {
   const made = await firstRun(db, { workspaceSlug: env.ELEMNT_WORKSPACE, email: env.ELEMNT_OWNER_EMAIL });
   if (made) console.log(`First run: created workspace "${made.workspace.slug}" owned by ${made.user.email}.\nAPI token (shown once; sign in at ${env.ELEMNT_PUBLIC_URL}/login, then make a new token in Settings and revoke this one): ${made.token}`);
 }
+if (env.ELEMNT_SETUP_CODE && !(await db.query.workspaces.findFirst({ where: (w, { eq }) => eq(w.slug, env.ELEMNT_WORKSPACE) }))) {
+  console.log(`Not set up yet. Create the owner account at this setup link: ${env.ELEMNT_PUBLIC_URL.replace(/\/$/, "")}/signup?setup=${env.ELEMNT_SETUP_CODE}`);
+}
 const hasEditor = existsSync(env.ELEMNT_WEB_DIR);
 if (!hasEditor) console.warn(`Editor not found at ${env.ELEMNT_WEB_DIR}; build apps/web to enable /app.`);
 const config = configFromEnv(env);

@@ -10,14 +10,14 @@ import * as schema from "../src/db/schema.js";
 import { MemoryBlobStore } from "../src/lib/blobs.js";
 
 /** A fresh install: no workspace, no people. */
-async function fresh(options: { signupOpen?: boolean } = {}) {
+async function fresh(options: { signupOpen?: boolean; setupCode?: string } = {}) {
   const client = new PGlite();
   const db = drizzle(client, { schema }) as unknown as Db;
   await migrate(drizzle(client), { migrationsFolder });
   const app = createApp({
     db,
     blobs: new MemoryBlobStore(),
-    config: { publicUrl: "https://docs.example.com", sandboxUrl: "https://sandbox.example.net", workspaceSlug: "acme", secretKey: randomBytes(32).toString("base64"), ...(options.signupOpen ? { signupOpen: true } : {}) },
+    config: { publicUrl: "https://docs.example.com", sandboxUrl: "https://sandbox.example.net", workspaceSlug: "acme", secretKey: randomBytes(32).toString("base64"), ...(options.signupOpen ? { signupOpen: true } : {}), ...(options.setupCode ? { setupCode: options.setupCode } : {}) },
   });
   let n = 0;
   const form = (path: string, fields: Record<string, string>, cookie?: string) =>
@@ -51,6 +51,24 @@ describe("first run", () => {
     expect(res.headers.get("location")).toBe("/app/?welcome=1");
     const me = await (await env.json("/api/me", cookieOf(res))).json();
     expect(me).toMatchObject({ email: "ada@example.com", username: "ada", name: "Ada Lovelace", role: "owner", hasPassword: true });
+  });
+
+  it("with a setup code, only the setup link can create the first account", async () => {
+    const code = "c0ffee".repeat(4);
+    env = await fresh({ setupCode: code });
+    const page = await (await env.app.request("/signup")).text();
+    expect(page).toContain("isn&#39;t set up yet");
+    expect(page).not.toContain("<form");
+    expect((await env.form("/signup", ADA)).status).toBe(403);
+    expect((await env.form("/signup", { ...ADA, setup: "wrong".repeat(4) })).status).toBe(403);
+
+    const linked = await (await env.app.request(`/signup?setup=${code}`)).text();
+    expect(linked).toContain("Set up Elemnt");
+    expect(linked).toContain(`name="setup" value="${code}"`);
+    const res = await env.form("/signup", { ...ADA, setup: code });
+    expect(res.headers.get("location")).toBe("/app/?welcome=1");
+    // Once the workspace exists the code does nothing; invites work as before.
+    expect(await (await env.app.request("/signup")).text()).toContain("Joining needs an invite link");
   });
 
   it("explains what's wrong next to the field", async () => {

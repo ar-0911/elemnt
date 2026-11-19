@@ -178,6 +178,20 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  /**
+   * For a reverse proxy that gets HTTPS certificates on demand (Caddy's
+   * on_demand_tls "ask"): 200 only for hostnames this server answers, so
+   * nobody can make it request certificates for arbitrary names.
+   */
+  app.get("/internal/tls-allow", async (c) => {
+    const host = (c.req.query("domain") ?? "").toLowerCase();
+    if (!host) return c.text("domain required", 400);
+    const own = [deps.config.publicUrl, sandboxUrl].filter(Boolean).map((u) => new URL(u!).hostname);
+    if (own.includes(host)) return c.text("ok");
+    const match = await sitesSvc.matchHost(sitesDeps, await currentWorkspace(), host).catch(() => undefined);
+    return match ? c.text("ok") : c.text("unknown host", 404);
+  });
+
   const appOrigin = new URL(deps.config.publicUrl).origin;
   app.use(async (c, next) => {
     c.set("nonce", randomBytes(16).toString("base64"));
@@ -334,15 +348,25 @@ export function createApp(deps: AppDeps) {
     }
   });
 
+  /**
+   * The first account owns the server. With ELEMNT_SETUP_CODE set, it can only
+   * be made through the setup link, so a stranger can't claim a fresh install.
+   */
+  const SETUP_NEEDED = "This Elemnt isn't set up yet. Open the setup link that was printed when it was installed. Lost it? Run: docker compose logs server | grep setup";
+  const setupState = (state: Awaited<ReturnType<typeof accounts.signupState>>, code: string | undefined) =>
+    state.firstAccount && deps.config.setupCode && !(code && safeEqual(code, deps.config.setupCode)) ? { allowed: false as const, firstAccount: true, reason: SETUP_NEEDED, workspaceName: undefined as string | undefined } : state;
+
   app.get("/signup", async (c) => {
     if (c.get("viewer")?.role) return c.redirect("/app/");
     const invite = c.req.query("invite");
-    const state = await accounts.signupState(deps.db, deps.config.workspaceSlug, signupOpen, invite);
+    const setup = c.req.query("setup");
+    const state = setupState(await accounts.signupState(deps.db, deps.config.workspaceSlug, signupOpen, invite), setup);
     return html(
       c,
       signupPage(c.get("nonce"), {
         next: safeNext(c.req.query("next")),
         ...(invite ? { invite } : {}),
+        ...(setup && state.allowed ? { setup } : {}),
         firstAccount: state.firstAccount,
         ...(state.allowed ? { role: state.role } : { blocked: state.reason }),
         ...(state.workspaceName ? { workspaceName: state.workspaceName } : {}),
@@ -354,13 +378,14 @@ export function createApp(deps: AppDeps) {
     const form = Object.fromEntries(Object.entries(await c.req.parseBody()).map(([k, v]) => [k, typeof v === "string" ? v : ""]));
     const next = safeNext(form.next);
     const values = { name: form.name ?? "", username: form.username ?? "", email: form.email ?? "" };
-    const state = await accounts.signupState(deps.db, deps.config.workspaceSlug, signupOpen, form.invite || undefined);
+    const state = setupState(await accounts.signupState(deps.db, deps.config.workspaceSlug, signupOpen, form.invite || undefined), form.setup || undefined);
     const again = (status: 403 | 409 | 422 | 429, extra: { errors?: Record<string, string>; error?: string }) =>
       html(
         c,
-        signupPage(c.get("nonce"), { next, ...(form.invite ? { invite: form.invite } : {}), values, firstAccount: state.firstAccount, ...(state.allowed ? { role: state.role } : { blocked: state.reason }), ...(state.workspaceName ? { workspaceName: state.workspaceName } : {}), ...extra }),
+        signupPage(c.get("nonce"), { next, ...(form.invite ? { invite: form.invite } : {}), ...(form.setup && state.allowed ? { setup: form.setup } : {}), values, firstAccount: state.firstAccount, ...(state.allowed ? { role: state.role } : { blocked: state.reason }), ...(state.workspaceName ? { workspaceName: state.workspaceName } : {}), ...extra }),
         status,
       );
+    if (!state.allowed && state.reason === SETUP_NEEDED) return again(403, {});
     try {
       limit(loginLog, `signup|${visitor(c)}`, 10, "Too many sign-ups from here. Try again later.");
       const made = await accounts.signup(deps.db, deps.config.workspaceSlug, signupOpen, { ...values, password: form.password ?? "", ...(form.invite ? { invite: form.invite } : {}) });

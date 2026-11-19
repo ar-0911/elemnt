@@ -1,6 +1,7 @@
 {
   "name": "@elemnt/elements",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "Browser runtime for rendered Elemnt pages: tabs, charts, sliders, quizzes, the widget sandbox host and runnable code.",
   "type": "module",
   "exports": {

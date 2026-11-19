@@ -88,7 +88,15 @@ Agents still get plain Markdown: a hero becomes a heading and a paragraph, cards
 
 ## Quick start (self-host with Docker)
 
-You need Docker and `openssl`.
+One command on any machine with Docker:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ar-0911/elemnt/main/deploy/selfhost/install.sh | sh
+```
+
+Leave the domain empty to run it on your machine at http://localhost:8787, or give one (say `docs.example.com`) to get HTTPS from Caddy with certificates handled for you. The script writes the secrets, starts Postgres and Elemnt, and prints a one-time setup link for the owner account. [docs/self-hosting.md](docs/self-hosting.md) covers DNS, settings, upgrades and backups.
+
+From a clone of the repo instead (builds the image locally; you need `openssl`):
 
 ```sh
 git clone https://github.com/ar-0911/elemnt.git && cd elemnt
@@ -99,7 +107,7 @@ docker compose up -d
 
 Then:
 
-1. Open http://localhost:8787 and create your account. The first account owns the workspace.
+1. Open the setup link (or http://localhost:8787 from a clone) and create your account. The first account owns the workspace.
 2. Follow the **Get started** checklist on the welcome page. A short tour shows the editor the first time you open a page.
 3. Invite your team from **Settings → People**. Each invite link carries a role (viewer, editor or admin) and lasts 7 days.
 
@@ -208,3 +216,7 @@ For hot reload:
 ## Status
 
 Elemnt is early. It runs as a single Node server with Postgres, packaged for Docker, with deploy targets for [Cloudflare Containers + R2](deploy/cloudflare/README.md) and [AWS App Runner + RDS + S3](deploy/aws/README.md). Both targets are new and not yet proven in production. Expect breaking changes before 1.0.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
